@@ -1,0 +1,19 @@
+{
+  "id": "word-frequency",
+  "title": "Word frequency with stdlib dict and list",
+  "targets": [
+    "erlang"
+  ],
+  "entry_module": "word_frequency_test",
+  "hidden_module": "zz_hidden_test",
+  "hidden_tests": 4,
+  "visible_tests": 4,
+  "touch": [
+    "src/word_frequency.gleam"
+  ],
+  "forbidden": [],
+  "covers": [
+    "stdlib-api-verification",
+    "dict-and-list-transformations"
+  ]
+}

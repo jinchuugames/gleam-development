@@ -1,0 +1,20 @@
+{
+  "id": "target-split",
+  "title": "Greeting origin across Erlang and JavaScript targets",
+  "targets": [
+    "erlang",
+    "javascript"
+  ],
+  "entry_module": "target_split_test",
+  "hidden_module": "zz_hidden_test",
+  "hidden_tests": 2,
+  "visible_tests": 1,
+  "touch": [
+    "src/greeting.gleam"
+  ],
+  "forbidden": [],
+  "covers": [
+    "target-compatibility",
+    "target-gated-code"
+  ]
+}

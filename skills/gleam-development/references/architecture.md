@@ -1,0 +1,71 @@
+# Architecture
+
+Load this when deciding where code should live, how errors should be
+represented, or whether a boundary deserves an abstraction.
+
+## Pure core, explicit edges
+
+The default shape for a Gleam feature:
+
+```
+src/
+  <domain>.gleam         pure types and rules (no IO, no time, no randomness)
+  <domain>/<topic>.gleam more pure rules, grouped by concept
+  <adapter>.gleam        talks to a store, a process, an HTTP client, a clock
+  <app>.gleam            wires the adapter to the domain: the only impure layer
+```
+
+- Domain functions take values and return values. They are trivially testable
+  and identical on both targets.
+- Adapters receive what they need as arguments (a store value, a function, a
+  connection) instead of reaching for globals. That is also how a
+  database-backed workflow is tested without a database: pass an in-memory
+  store with the same shape.
+- The impure layer stays thin enough to read in one screen. If it grows
+  branching logic, that logic belongs in the domain.
+
+## Errors
+
+- One custom error type per operation boundary, variants named for the failure.
+- Recoverable failures return `Result(a, Error)`. Panics are for invariants
+  that a correct program cannot violate.
+- Convert external errors at the edge into domain variants; do not leak
+  `Dynamic`, HTTP status codes, or driver errors into the core.
+- Do not use a single giant `Error` type across unrelated features. Two small
+  error types beat one `SomethingWentWrong`.
+
+## Module ownership
+
+- A module owns a concept, not a layer. `order` owns order types and rules;
+  `order/discount` owns discount rules that `order` calls.
+- Before adding a module, search for the concept: `grep -rn "pub fn " src/`.
+  Extending the existing owner is cheaper and keeps the API discoverable.
+- Public API is the module's surface: everything `pub` needs a caller or a
+  test. Make helpers private.
+- Avoid circular dependencies: if two modules need each other, one of them is
+  holding a type that belongs in a third module.
+
+## Abstraction budget
+
+- No interface for one implementation.
+- No option, flag, or configuration value without a caller.
+- No generic helper until the second concrete use shows the shape.
+- Deleting code is a valid design move: replaced paths go away in the same
+  change, not behind a compatibility shim.
+
+## Stateful boundaries
+
+Decision order for state that outlives a call:
+
+1. Pass it explicitly (function argument, return value). Deterministic, easy to
+   test, works on both targets.
+2. Hold it in a store module that the caller owns and passes in.
+3. Introduce a process only when the state must be shared concurrently or must
+   survive individual calls (see `otp-patterns.md`).
+
+## Definition of done for an architecture change
+
+- The domain rules are reachable without IO in tests.
+- Public APIs are smaller or unchanged, not accidentally larger.
+- Both claimed targets still build.
+- No duplicate implementation of a concept that already had an owner.

@@ -1,0 +1,19 @@
+{
+  "id": "bugfix-pagination",
+  "title": "Fix 1-based pagination boundaries",
+  "targets": [
+    "erlang"
+  ],
+  "entry_module": "bugfix_pagination_test",
+  "hidden_module": "zz_hidden_test",
+  "hidden_tests": 4,
+  "visible_tests": 2,
+  "touch": [
+    "src/pagination.gleam"
+  ],
+  "forbidden": [],
+  "covers": [
+    "bug-fixing",
+    "boundary-conditions"
+  ]
+}
