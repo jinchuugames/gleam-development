@@ -79,6 +79,10 @@ single=$("$api" search upsert --dir "$sample")
 multi=$("$api" search remove a key --dir "$sample")
 quoted=$("$api" search "remove a key" --dir "$sample")
 assert_contains "$single" "upsert" "single-word search finds the symbol"
+[ -n "$multi" ] || {
+  echo "LOOKUP FAILURE: multi-word search returned no records" >&2
+  exit 1
+}
 [ "$multi" = "$quoted" ] || {
   echo "LOOKUP FAILURE: unquoted multi-word search differs from the quoted form" >&2
   exit 1

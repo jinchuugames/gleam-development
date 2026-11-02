@@ -292,13 +292,17 @@ run_case() { # $1 task, $2 condition
   for symbol in $(jq -r '.forbidden[]?' "$meta"); do
     if grep -rqw -- "$symbol" "$work/src" 2>/dev/null; then duplicates=$((duplicates + 1)); fi
   done
-  files_read=$(jq -r '.files_read // "null"' "$metrics_file" 2>/dev/null || echo null)
+  files_read=$(jq -r '.files_read // "null"' "$metrics_file" 2>/dev/null)
+  # An absent or empty metrics file, or a non-numeric value, means "not reported".
+  case "$files_read" in
+    ""|null|*[!0-9]*) files_read=null ;;
+  esac
   regression=false
   $test_ok && regression=false || regression=true
 
   local attempts_used="$attempt"
   $hidden_ok || attempts_used="$attempts"
-  jq -n \
+  jq -c -n \
     --arg task "$task" --arg condition "$condition" \
     --argjson first "$first_pass" --argjson final "$hidden_ok" \
     --argjson attempts_used "$attempts_used" --argjson builds "$builds" --argjson tests "$tests" \

@@ -204,7 +204,7 @@ OTP 29, Node 23.11.1, `gleam_stdlib` 1.0.5, `gleeunit` 1.11.0.
   topic comes up.
 - A benchmark task needs a `work/` project, hidden tests with
   `visible_tests`/`hidden_tests` counts in `meta.json`, and recorded attempts
-  for `baseline`, `docs`, and `feedback`.
+  for `baseline`, `docs`, `feedback`, and `repair`.
 - Run `scripts/check.sh` before claiming anything works. It formats, builds,
   tests, checks lookup, and runs the benchmark guard.
 
