@@ -8,6 +8,16 @@ description: Use when writing, changing, debugging, or testing Gleam code (.glea
 Verify unfamiliar APIs against installed sources. Use the compiler and tests to check each change.
 A successful build proves that types fit. Tests check behaviour and test discovery.
 
+The lookup script is bundled at `scripts/gleam-api`, relative to this `SKILL.md`.
+Resolve its absolute path from the installed skill location.
+Set `gleam_api` to that path in each shell call that uses the examples below.
+Keep the current directory at the Gleam project. No PATH change is necessary.
+
+```sh
+gleam_api="/absolute/path/to/installed/gleam-development/scripts/gleam-api"
+"$gleam_api" packages
+```
+
 ## 1. Discovery (before writing)
 
 Find the code that should change, and the code that already does the job.
@@ -22,8 +32,8 @@ Find the code that should change, and the code that already does the job.
    ```sh
    grep -rn "<concept>" src test      # names, doc comments, tests that mention it
    grep -rn "^pub fn " src            # existing public implementations
-   gleam-api dupes                    # bodies you already have under another name
-   gleam-api search <concept>         # installed dependencies
+   "$gleam_api" dupes                    # bodies you already have under another name
+   "$gleam_api" search <concept>         # installed dependencies
    ```
 
    `dupes` compares function bodies in `src/` and reports pairs that are mostly
@@ -42,20 +52,14 @@ Find the code that should change, and the code that already does the job.
 Before using an unfamiliar function or type:
 
 ```sh
-gleam-api sig gleam/dict.upsert     # signature, doc, package, version
-gleam-api find <name>               # every public symbol with that exact name
-gleam-api type <TypeName>           # custom type with its variants and fields
-gleam-api search <text>             # search names and documentation
-gleam-api packages                  # compiler + pinned dependency versions
+"$gleam_api" sig gleam/dict.upsert     # signature, doc, package, version
+"$gleam_api" find <name>               # every public symbol with that exact name
+"$gleam_api" type <TypeName>           # custom type with its variants and fields
+"$gleam_api" search <text>             # search names and documentation
+"$gleam_api" packages                  # compiler + pinned dependency versions
 ```
 
-`gleam-api` is the toolkit's lookup script. Put it on `PATH` once:
-
-```sh
-install -m 0755 scripts/gleam-api ~/.local/bin/gleam-api
-```
-
-Run it inside the project, or point it at one with `--dir <project>`.
+Run the bundled script inside the project, or pass `--dir <project>`.
 
 If `gleam-api` is unavailable, use this fallback order, and say which step you
 used:

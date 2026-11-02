@@ -8,12 +8,12 @@ are unsure which module owns a concept, or when the pinned versions matter.
 Never write a standard-library call from memory. Verify it:
 
 ```sh
-gleam-api sig gleam/list.fold        # exact signature, package, version
-gleam-api find <name>                # all public symbols with this name
-gleam-api search <purpose words>     # search names and documentation
-gleam-api type <TypeName>            # custom type, variants, fields
-gleam-api module gleam/dict          # one line per public symbol
-gleam-api packages                   # compiler version + locked dependency versions
+"$gleam_api" sig gleam/list.fold        # exact signature, package, version
+"$gleam_api" find <name>                # all public symbols with this name
+"$gleam_api" search <purpose words>     # search names and documentation
+"$gleam_api" type <TypeName>            # custom type, variants, fields
+"$gleam_api" module gleam/dict          # one line per public symbol
+"$gleam_api" packages                   # compiler version + locked dependency versions
 ```
 
 Output names the owning package and its locked version, for example:

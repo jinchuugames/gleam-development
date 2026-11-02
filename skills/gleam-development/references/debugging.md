@@ -86,7 +86,7 @@ right".
 | `let assert` on a recoverable failure | a validation error becomes a crash | match the `Result`; keep `let assert` for impossible cases |
 | `_ ->` in a `case` | exhaustiveness stops being checked, so a later variant is silently ignored | name every variant, or add the fallback knowingly |
 | IO inside the rule | the rule cannot be tested without a database or a clock, and behaves differently per target | pass the value in; keep the effect at the edge |
-| A second implementation | a helper copied under a new name instead of reused | `gleam-api dupes`, then delete the copy |
+| A second implementation | a helper copied under a new name instead of reused | `"$gleam_api" dupes`, then delete the copy |
 
 When the bug was only visible on one target, look at numbers first, then at
 externals: `@external` names and paths are unchecked strings that compile and

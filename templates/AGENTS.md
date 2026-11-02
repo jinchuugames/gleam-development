@@ -43,16 +43,11 @@ unchanged or higher, no unrelated files touched.
 
 ## API lookup
 
-Do not write a standard-library or dependency call from memory. Verify it:
+Use the installed `gleam-development` skill to verify unfamiliar APIs.
+Its bundled `scripts/gleam-api` resolves from the skill directory and needs no PATH change.
+Check existing project code before you add a helper.
 
-```sh
-gleam-api sig <module>.<function>   # or: gleam-api find <name>
-gleam-api type <TypeName>
-gleam-api dupes                     # before adding a helper: is it already here?
-gleam-api packages
-```
-
-If `gleam-api` is not available, read
+If the skill is unavailable, read
 `build/packages/<package>/src/**/*.gleam`, then `gleam export
 package-interface`, then version-pinned HexDocs
 (`https://hexdocs.pm/<package>/<version>/<module>.html`). If a symbol is in none

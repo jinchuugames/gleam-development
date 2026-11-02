@@ -237,16 +237,19 @@ run_case() { # $1 task, $2 condition
   # Stage the toolkit outside the repository tree so no path handed to the
   # agent leads back to benchmarks/tasks/*/hidden/.
   local stage="$out/.stage/$condition-$task"
+  local docs_cmd=""
   remove_output "$stage"
   case "$condition" in
-    C|D)
+    C)
       mkdir -p "$stage" || fail "cannot create $stage"
-      cp "$root/scripts/gleam-api" "$stage/gleam-api" || fail "cannot stage lookup"
-      chmod +x "$stage/gleam-api" ;;
+      cp "$root/skills/gleam-development/scripts/gleam-api" "$stage/gleam-api" || fail "cannot stage lookup"
+      chmod +x "$stage/gleam-api"
+      docs_cmd="$stage/gleam-api" ;;
+    D)
+      mkdir -p "$stage" || fail "cannot create $stage"
+      cp -R "$root/skills/gleam-development" "$stage/skill" || fail "cannot stage skill"
+      docs_cmd="$stage/skill/scripts/gleam-api" ;;
   esac
-  if [ "$condition" = "D" ]; then
-    cp -R "$root/skills/gleam-development" "$stage/skill" || fail "cannot stage skill"
-  fi
   cp -R "$tdir/work" "$work"
   git -C "$work" init -q
   git -C "$work" add -A
@@ -258,7 +261,7 @@ run_case() { # $1 task, $2 condition
     case "$condition" in
       C|D)
         printf '\n\nYou may look up installed APIs:\n  %s sig <module>.<function>\n  %s find <name>\n  %s search <text>\n' \
-          "$stage/gleam-api" "$stage/gleam-api" "$stage/gleam-api" ;;
+          "$docs_cmd" "$docs_cmd" "$docs_cmd" ;;
     esac
     if [ "$condition" = "D" ]; then
       printf '\nFollow the Gleam development skill at:\n  %s/skill/SKILL.md\n' "$stage"
@@ -278,7 +281,7 @@ run_case() { # $1 task, $2 condition
       BENCH_FEEDBACK_FILE="$feedback_file" BENCH_METRICS="$metrics_file"
     )
     case "$condition" in
-      C|D) envs+=(BENCH_DOCS_CMD="$stage/gleam-api") ;;
+      C|D) envs+=(BENCH_DOCS_CMD="$docs_cmd") ;;
     esac
     if [ "$condition" = "D" ]; then
       envs+=(BENCH_SKILL_FILE="$stage/skill/SKILL.md")

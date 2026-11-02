@@ -39,7 +39,7 @@ src/
 - A module owns a concept, not a layer. `order` owns order types and rules;
   `order/discount` owns discount rules that `order` calls.
 - Before adding a module, search for the concept: `grep -rn "pub fn " src/`, and
-  run `gleam-api dupes` when you are about to add a helper that might already
+  run `"$gleam_api" dupes` when you are about to add a helper that might already
   exist under another name. Extending the existing owner is cheaper and keeps
   the API discoverable.
 - Public API is the module's surface: everything `pub` needs a caller or a
@@ -61,7 +61,7 @@ pretend the second kind is the first.
 | Target support | `@target(erlang)` / `@target(javascript)` plus building both |
 | No IO in the domain | nothing. A test that passes a fake store or clock is the check |
 | Effects only at the edge | nothing; grep imports (`grep -rn "gleam/io\|gleam/erlang" src/`) |
-| One implementation per concept | `gleam-api dupes` and review |
+| One implementation per concept | `"$gleam_api" dupes` and review |
 | Domain does not import adapters | nothing; keep the import list in the reference above short and read it |
 
 Verified compiler behaviour behind two of those rows: `let assert` on a

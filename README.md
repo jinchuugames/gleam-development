@@ -14,9 +14,9 @@ repair. This repository packages that loop.
 
 | Path | What it is |
 | --- | --- |
-| `skills/gleam-development/` | The skill: `SKILL.md` plus eight reference files loaded only when relevant |
+| `skills/gleam-development/` | The skill, its bundled lookup script, and eight references for specific topics |
 | `templates/AGENTS.md` | Copyable `AGENTS.md` for a Gleam repository, with placeholders to fill |
-| `scripts/gleam-api` | API lookup over installed package sources; reports package and pinned version |
+| `skills/gleam-development/scripts/gleam-api` | API lookup over installed package sources; reports package and pinned version |
 | `scripts/check.sh` | Verifies formatting, examples, fixtures, lookup, and the benchmark guard |
 | `examples/order-pipeline` | Pure domain: custom types, state transitions, `Result` validation, pricing |
 | `examples/inventory` | Architecture: pure core, store boundary, why an actor is not justified |
@@ -27,9 +27,10 @@ repair. This repository packages that loop.
 ## Requirements
 
 - Gleam 1.19.2 or newer (`gleam --version`); tested with 1.19.2.
-- Erlang/OTP for the Erlang target (tested with OTP 29), Node/Deno/Bun only if
-  you build for JavaScript.
-- `jq` for `scripts/gleam-api --json` and the benchmark harness.
+- Erlang/OTP for the Erlang target (tested with OTP 29).
+- Node.js and npm for the Skills CLI installation command.
+- Node, Deno, or Bun to build and test the JavaScript target.
+- `jq` for `gleam-api --json` and the benchmark harness.
 - `timeout` (GNU coreutils) or `gtimeout` to bound a benchmark agent; without
   either the harness warns and agent attempts run unbounded.
 
@@ -38,76 +39,45 @@ service, a model provider, or an account.
 
 ## Install
 
-Clone, then install for the agent you use.
-
-### Claude Code
+Run this command from your Gleam project:
 
 ```sh
-mkdir -p ~/.claude/skills ~/.local/bin
-cp -R skills/gleam-development ~/.claude/skills/
-install -m 0755 scripts/gleam-api ~/.local/bin/gleam-api
+npx skills add jinchuugames/gleam-development --skill gleam-development --agent codex --yes
 ```
 
-Skills in `~/.claude/skills/<name>/SKILL.md` are discovered at session start.
-`~/.local/bin` must be on `PATH`; without the script the skill's lookup step
-falls back to grepping installed sources. For one project only, use
-`.claude/skills/gleam-development/` inside that project instead.
+This command installs the skill, all references, and the executable lookup script.
+The agent uses the bundled script directly. No separate script installation or PATH change is necessary.
+Add `--global` to use the skill across projects.
+For Claude Code, replace `--agent codex` with `--agent claude-code`.
+Omit `--agent` to select agents interactively.
 
-### omp
+For Codex, invoke the skill with `$gleam-development` in your prompt.
+The optional `templates/AGENTS.md` supplies project instructions. Merge it with an existing file and fill its placeholders.
+The template is not necessary to install the skill.
 
-```sh
-mkdir -p ~/.omp/agent/skills ~/.local/bin
-cp -R skills/gleam-development ~/.omp/agent/skills/
-install -m 0755 scripts/gleam-api ~/.local/bin/gleam-api
-```
-
-Verified: a fresh `omp -p` session lists `gleam-development` as an available
-skill after this copy (omp 18.14.2).
-
-### Codex
-
-Codex reads `AGENTS.md` from the repository root, so the template is the
-integration:
-
-```sh
-cp templates/AGENTS.md /path/to/your-gleam-project/AGENTS.md
-$EDITOR /path/to/your-gleam-project/AGENTS.md   # fill the placeholders
-```
-
-Keep the skill file in the repository as well and reference it from
-`AGENTS.md` if your Codex setup supports skill files:
-
-```sh
-mkdir -p /path/to/your-gleam-project/.agents/skills
-cp -R skills/gleam-development /path/to/your-gleam-project/.agents/skills/
-```
-
-### Any custom CLI agent
-
-Give the agent the skill as system context and the lookup tool on `PATH`:
-
-```sh
-install -m 0755 scripts/gleam-api ~/.local/bin/gleam-api
-```
-
-Then start the agent with `skills/gleam-development/SKILL.md` in its system
-prompt, and tell it that `gleam-api` is available. Nothing in the toolkit
-assumes a particular model or harness.
+For an agent without Skills CLI support, copy the complete `skills/gleam-development/` directory into its skill location.
+For example, omp uses `~/.omp/agent/skills/gleam-development/`.
+Give a custom agent the absolute path to `SKILL.md`; keep the bundled `scripts/` and `references/` directories beside it.
 
 ## Documentation lookup
 
+The agent resolves the script from the installed skill directory.
+For a project installation with Codex, you can also run it directly:
+
 ```sh
-gleam-api packages                     # compiler version and pinned dependency versions
-gleam-api sig gleam/dict.upsert        # exact signature, documentation, package, version
-gleam-api find upsert                  # every public symbol with that name
-gleam-api type Dict                    # custom type with variants
-gleam-api search remove a key          # search names and documentation
-gleam-api module gleam/list            # one line per public symbol
-gleam-api dupes                        # project functions that are mostly the same lines
-gleam-api sig gleam/dict.upsert --json # machine-readable
-gleam-api find dict.update             # exits 1: it does not exist in 1.0.5
+gleam_api="$PWD/.agents/skills/gleam-development/scripts/gleam-api"
+"$gleam_api" packages                     # compiler version and pinned dependency versions
+"$gleam_api" sig gleam/dict.upsert        # exact signature, documentation, package, version
+"$gleam_api" find upsert                  # every public symbol with that name
+"$gleam_api" type Dict                    # custom type with variants
+"$gleam_api" search remove a key          # search names and documentation
+"$gleam_api" module gleam/list            # one line per public symbol
+"$gleam_api" dupes                        # project functions that are mostly the same lines
+"$gleam_api" sig gleam/dict.upsert --json # machine-readable
+"$gleam_api" find dict.update             # exits 1: it does not exist in 1.0.5
 ```
 
+`scripts/gleam-api` remains a repository alias for the bundled script.
 Run it inside the project (or pass `--dir <project>`). It reads
 `build/packages/<package>/src/**/*.gleam` for dependencies and `src/` for your
 own modules, and takes versions from `manifest.toml`. No network, no extra

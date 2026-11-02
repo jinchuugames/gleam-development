@@ -32,7 +32,7 @@ call, or must be supervised.
   the entry module, not inside library code.
 
 Verified surface in `gleam_otp 1.3.0` (pinned versions change; re-check with
-`gleam-api module gleam/otp/actor`):
+`"$gleam_api" module gleam/otp/actor`):
 
 - `gleam/otp/actor`: `actor.start`, `actor.continue`, `actor.stop`; `Next`
   is opaque, built with `actor.continue(state)` or `actor.stop()`; `Started(data)`

@@ -3,18 +3,20 @@
 set -euo pipefail
 
 root=$(cd "$(dirname "$0")/.." && pwd)
+skill="$root/skills/gleam-development"
+api="$skill/scripts/gleam-api"
 scratch=$(mktemp -d "${TMPDIR:-/tmp}/gleam-development-check.XXXXXX")
 trap 'rm -rf -- "$scratch"' EXIT
 
 step() { printf '\n== %s\n' "$1"; }
 
 step "shell syntax"
-bash -n "$root/scripts/gleam-api"
+bash -n "$api"
 bash -n "$root/benchmarks/harness/run.sh"
 bash -n "$root/benchmarks/harness/mock-agent.sh"
 bash -n "$root/benchmarks/harness/regression-check.sh"
 if command -v shellcheck >/dev/null; then
-  shellcheck "$root/scripts/check.sh" "$root/scripts/gleam-api" "$root"/benchmarks/harness/*.sh
+  shellcheck "$root/scripts/check.sh" "$api" "$root"/benchmarks/harness/*.sh
 fi
 
 step "formatting"
@@ -60,7 +62,6 @@ done
 
 step "documentation lookup against a pinned project"
 sample="$scratch/word-frequency"
-api="$root/scripts/gleam-api"
 
 assert_contains() { # $1 haystack, $2 needle, $3 label
   printf '%s\n' "$1" | grep -F -q "$2" || {
@@ -111,6 +112,20 @@ if "$api" sig gleam/list.upsert --dir "$sample" >/dev/null 2>&1; then
   exit 1
 fi
 echo "  wrong-module lookup exits non-zero"
+
+step "installed skill includes the lookup script"
+installed="$scratch/installed skill"
+cp -R "$skill" "$installed"
+[ -x "$installed/scripts/gleam-api" ] && [ ! -L "$installed/scripts/gleam-api" ] || {
+  echo "INSTALL FAILURE: the skill has no bundled executable" >&2
+  exit 1
+}
+installed_json=$(cd "$sample" && "$installed/scripts/gleam-api" sig gleam/dict.upsert --json)
+printf '%s\n' "$installed_json" |
+  jq -e '.[0] | .package == "gleam_stdlib" and .version == "1.0.5" and (.signature | startswith("pub fn upsert"))' >/dev/null
+assert_contains "$("$root/scripts/gleam-api" sig gleam/dict.upsert --dir "$sample")" \
+  "pub fn upsert(" "the repository alias still works"
+echo "  the copied skill reads real pinned sources without a PATH change"
 
 step "reuse detection"
 # Two modules holding the same helper, one line apart: the copy an agent writes
