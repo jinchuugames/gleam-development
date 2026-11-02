@@ -2,11 +2,11 @@ import gleam/dict.{type Dict}
 import gleam/int
 import gleam/list
 import gleam/option
-import gleam/order
 import gleam/string
 
-// Recorded attempt after checking the installed API: gleam_stdlib 1.0.5 has
-// `dict.upsert`, not `dict.update`.
+// Recorded repair after compiler feedback: the nonexistent `dict.update` call
+// is replaced with `dict.upsert`, and the sorting of `top_words` is still
+// missing, so the behavioural tests keep failing.
 pub fn count_words(text: String) -> Dict(String, Int) {
   text
   |> string.lowercase
@@ -26,14 +26,5 @@ pub fn top_words(text: String, limit: Int) -> List(#(String, Int)) {
   text
   |> count_words
   |> dict.to_list
-  |> list.sort(by: compare_counts)
   |> list.take(up_to: int.max(limit, 0))
-}
-
-fn compare_counts(a: #(String, Int), b: #(String, Int)) -> order.Order {
-  case int.compare(a.1, b.1) {
-    order.Lt -> order.Gt
-    order.Gt -> order.Lt
-    order.Eq -> string.compare(a.0, b.0)
-  }
 }

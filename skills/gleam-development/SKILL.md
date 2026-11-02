@@ -50,8 +50,13 @@ gleam-api search <text>             # search names and documentation
 gleam-api packages                  # compiler + pinned dependency versions
 ```
 
-`gleam-api` lives in this toolkit's `scripts/` and must be run from (or
-pointed at) the project with `--dir <project>`.
+`gleam-api` is the toolkit's lookup script. Put it on `PATH` once:
+
+```sh
+install -m 0755 scripts/gleam-api ~/.local/bin/gleam-api
+```
+
+Run it inside the project, or point it at one with `--dir <project>`.
 
 If `gleam-api` is unavailable, use this fallback order, and say which step you
 used:

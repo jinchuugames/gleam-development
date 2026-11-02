@@ -40,19 +40,22 @@ Clone, then install for the agent you use.
 ### Claude Code
 
 ```sh
-mkdir -p ~/.claude/skills
+mkdir -p ~/.claude/skills ~/.local/bin
 cp -R skills/gleam-development ~/.claude/skills/
+install -m 0755 scripts/gleam-api ~/.local/bin/gleam-api
 ```
 
 Skills in `~/.claude/skills/<name>/SKILL.md` are discovered at session start.
-For one project only, use `.claude/skills/gleam-development/` inside that
-project instead.
+`~/.local/bin` must be on `PATH`; without the script the skill's lookup step
+falls back to grepping installed sources. For one project only, use
+`.claude/skills/gleam-development/` inside that project instead.
 
 ### omp
 
 ```sh
-mkdir -p ~/.omp/agent/skills
+mkdir -p ~/.omp/agent/skills ~/.local/bin
 cp -R skills/gleam-development ~/.omp/agent/skills/
+install -m 0755 scripts/gleam-api ~/.local/bin/gleam-api
 ```
 
 Verified: a fresh `omp -p` session lists `gleam-development` as an available
@@ -138,8 +141,11 @@ first. That is why it is documented rather than required here; see
 Conditions: A baseline, B with compiler feedback, C with documentation lookup,
 D with the skill. Every task has hidden tests that are injected after each
 attempt and removed again, and the harness refuses a run whose tests did not
-execute (`test/` placement, `gleeunit.main()` present, executed count at least
-the expected number). See `benchmarks/README.md`.
+execute (`test/` placement, `gleeunit.main()` present, and the hidden run
+executing at least `hidden_tests` more tests than the visible run). Each
+condition gets only its own environment, and the skill and lookup tool are
+staged outside the repository so no path reaches the hidden tests. See
+`benchmarks/README.md`.
 
 The bundled agent is a fixture that replays recorded attempts. It exists so the
 harness can be validated without paid API access; its scores are not evidence
@@ -154,15 +160,18 @@ OTP 29, Node 23.11.1, `gleam_stdlib` 1.0.5, `gleeunit` 1.11.0.
   same suite passes on `--target javascript`.
 - `examples/inventory`: 28 tests pass on both `--target erlang` and
   `--target javascript`.
-- `scripts/gleam-api` reports real signatures from the pinned stdlib and exits
-  1 for `dict.update`.
-- `benchmarks/harness/run.sh --self-check` refuses both deliberately broken
-  discovery setups.
+- `scripts/gleam-api` reports real signatures from the pinned stdlib, ANDs every
+  word of a multi-word search, returns valid `--json`, and exits 1 for
+  `dict.update` and for a symbol looked up in the wrong module.
+- `benchmarks/harness/run.sh --self-check` proves the baseline environment
+  receives no toolkit path, that staged paths never reach the repository, that
+  the discovery guard refuses a missing, an unexecuted, and a hollow hidden
+  test, and that a hanging agent is recorded as a timeout.
 - The full fixture benchmark (6 tasks × 4 conditions): A 0/6, B 0/6 first
-  attempt and 6/6 after compiler feedback, C 6/6, D 6/6. Table and failure
-  modes are in `benchmarks/README.md`.
+  attempt and 6/6 after three attempts (repair, then the remaining fix), C 6/6,
+  D 6/6. Table and failure modes are in `benchmarks/README.md`.
 - `scripts/check.sh` passes end to end: formatting, 57 example tests, every
-  task's correct attempt running its hidden tests, documentation lookup, the
+  task's correct attempt running its hidden tests, the full lookup surface, the
   discovery guard, and the fixture benchmark.
 
 ## Limitations

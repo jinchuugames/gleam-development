@@ -104,9 +104,10 @@ can confirm a function that does not exist in the project's locked version.
 
 ## `gleamdoc` — verified, conditional
 
-- Latest release **0.4.1** on Hex, published 2026-06-23, last updated
-  2026-10-11. All-time downloads 348 (Hex API). Small, active, single
-  maintainer (`~jturner/gleamdoc` on sourcehut).
+- Latest release **0.4.1**, published 2026-10-11 (Hex API). The earlier
+  releases are 0.4.0 (2026-08-12), 0.3.0 (2026-07-17), and 0.2.0 (2026-06-23).
+  All-time downloads 348. Small, active, single maintainer
+  (`~jturner/gleamdoc` on sourcehut).
 - Not on this machine's `PATH`. It is a Gleam package, not a system binary, and
   it declares no `escript`, so `gleam export escript` cannot produce a
   standalone binary from it as published.

@@ -1,3 +1,2 @@
 build/
 *.beam
-gleam-dev-*

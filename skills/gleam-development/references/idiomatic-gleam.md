@@ -62,7 +62,10 @@ argument is not the data, and do not pipe a single call just for style.
 
 ## Records and updates
 
-Gleam has no record-update syntax. Write a small function that returns a copy:
+Gleam has no mutation: `..record` builds a new value with some fields replaced.
+That spread is the record-update syntax; what it does not do is mutate in place.
+Use it directly for a one-off change, and wrap it in a small function when the
+same spread repeats at many call sites:
 
 ```gleam
 fn with_status(order: Order, status: Status) -> Order {
@@ -70,8 +73,8 @@ fn with_status(order: Order, status: Status) -> Order {
 }
 ```
 
-This keeps the change in one place instead of repeating `Order(..order, ...)`
-at every call site.
+The wrapper keeps the field list in one place; it does not make the update
+mutable.
 
 ## Things that look clever and are not
 

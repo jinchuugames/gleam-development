@@ -10,20 +10,16 @@ pub type User {
   User(name: String, age: Int)
 }
 
+// Recorded repair after behavioural test feedback: blank names and underage
+// registrations are rejected, but the name is neither trimmed nor length
+// checked, so those cases still fail.
 pub fn register(name: String, age: Int) -> Result(User, RegistrationError) {
-  let trimmed = string.trim(name)
-  case trimmed {
-    "" -> Error(BlankName)
-    _ -> {
-      let length = string.length(trimmed)
-      case length < 3 {
-        True -> Error(NameTooShort(length))
-        False ->
-          case age < 13 {
-            True -> Error(Underage(age))
-            False -> Ok(User(name: trimmed, age: age))
-          }
+  case name == "" {
+    True -> Error(BlankName)
+    False ->
+      case age < 13 {
+        True -> Error(Underage(age))
+        False -> Ok(User(name: name, age: age))
       }
-    }
   }
 }

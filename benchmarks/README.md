@@ -46,13 +46,28 @@ tasks/<id>/
   prompt.md        what the agent is told
   work/            the project handed to the agent (gleam.toml, manifest.toml, src/, test/)
   hidden/zz_hidden_test.gleam
-  agent/baseline/  recorded first attempt (files copied over work/)
+  agent/baseline/  recorded first attempt, blind (used by B; A stops here)
   agent/docs/      recorded first attempt with API lookup (used by C and D)
-  agent/feedback/  recorded repair after compiler output (used by B, C, D on attempt 2+)
+  agent/feedback/  recorded partial repair after compiler/test output; still defective
+  agent/repair/    recorded remaining fix (used on attempt 3)
 ```
 
 Each `agent/<variant>/` directory contains only the files that variant changes,
 at the same relative paths as in `work/`.
+
+Which variant is replayed:
+
+| Condition | Attempt 1 | Attempt 2 | Attempt 3 |
+| --- | --- | --- | --- |
+| A | baseline | — | — |
+| B | baseline | feedback | repair |
+| C | docs | feedback | repair |
+| D | docs | feedback | repair |
+
+So B's evidence is a distinct partial repair applied from feedback, not the same
+file C reaches first. Two tasks (`validate-user`, `bugfix-pagination`) start
+from a seeded stub or bug, so their `baseline` attempt modifies nothing; the
+other four replay a recorded failed attempt that changes the source.
 
 ## Agent contract
 
@@ -62,10 +77,13 @@ Any executable works as an agent:
 - the task prompt is in `$BENCH_PROMPT_FILE`;
 - environment: `BENCH_TASK`, `BENCH_CONDITION`, `BENCH_ATTEMPT`,
   `BENCH_VARIANT`, `BENCH_FEEDBACK_FILE` (compiler output from the previous
-  attempt), `BENCH_SKILL_FILE` (skill path, condition D),
-  `BENCH_DOCS_CMD` (lookup command, conditions C and D), `BENCH_METRICS`
-  (write a JSON file here);
-- it edits files in the work directory and exits.
+  attempt), `BENCH_METRICS` (write a JSON file here), and only when the
+  condition allows it, `BENCH_DOCS_CMD` (C and D) and `BENCH_SKILL_FILE` (D);
+- the toolkit is staged under `$out/.stage/`, so no path in its environment
+  reaches the repository or `benchmarks/tasks/*/hidden/`;
+- it edits files in the work directory and exits;
+- it is killed after `BENCH_AGENT_TIMEOUT` seconds (default 600) and the
+  attempt is recorded as failed.
 
 `BENCH_METRICS` is optional and should contain
 `{"files_read": Int, "tokens": Int|null, "model": String}`. Tokens are reported
@@ -92,8 +110,9 @@ attempt the harness:
 1. copies the hidden test into `test/`;
 2. refuses the run with `DISCOVERY FAILURE ...` when the file is not there,
    when `test/<project>_test.gleam` no longer calls `gleeunit.main()`, when
-   gleeunit reports `No tests found!`, or when fewer tests ran than
-   `visible_tests + hidden_tests`;
+   gleeunit reports `No tests found!`, or when the hidden run executes fewer
+   than `hidden_tests` more tests than the visible run did — a delta, so adding
+   passing tests of your own does not satisfy the guard;
 3. removes the hidden file again so the next attempt cannot see it.
 
 Prove the guard works:
@@ -102,9 +121,12 @@ Prove the guard works:
 ./benchmarks/harness/run.sh --self-check
 ```
 
-It deliberately breaks discovery in two ways (hidden test outside `test/`, and
-an entry module that stops calling `gleeunit.main()`) and fails unless both are
-refused.
+It probes each condition's environment (A must receive no toolkit path, C the
+lookup command only, D both, and no path may contain the repository root),
+breaks discovery in three ways (hidden test outside `test/`, an entry module
+that stops calling `gleeunit.main()`, and a hollow hidden test that adds one
+trivial pass instead of the expected tests), and checks that a hanging agent is
+recorded as a timeout. It fails unless every check holds.
 
 ## Running
 
@@ -129,20 +151,26 @@ Measured 2026-11-02, Gleam 1.19.2, OTP 29, Node 23.11.1, `gleam_stdlib` 1.0.5,
 
 | Task | A final | B first → final | C first → final | D first → final |
 | --- | --- | --- | --- | --- |
-| `word-frequency` | fail | fail → pass (2 attempts) | pass | pass |
-| `cart-totals` | fail | fail → pass (2 attempts) | pass | pass |
-| `validate-user` | fail | fail → pass (2 attempts) | pass | pass |
-| `reuse-format` | fail | fail → pass (2 attempts) | pass | pass |
-| `target-split` | fail | fail → pass (2 attempts) | pass | pass |
-| `bugfix-pagination` | fail | fail → pass (2 attempts) | pass | pass |
+| `word-frequency` | fail | fail → pass (3 attempts) | pass | pass |
+| `cart-totals` | fail | fail → pass (3 attempts) | pass | pass |
+| `validate-user` | fail | fail → pass (3 attempts) | pass | pass |
+| `reuse-format` | fail | fail → pass (3 attempts) | pass | pass |
+| `target-split` | fail | fail → pass (3 attempts) | pass | pass |
+| `bugfix-pagination` | fail | fail → pass (3 attempts) | pass | pass |
 | **totals** | **0/6** | **0/6 → 6/6** | **6/6** | **6/6** |
+
+Every B run takes three attempts: the first fails, the recorded repair still
+fails the acceptance tests, and the final correction passes. That is the
+compiler-feedback cycle, not a single correct file replayed.
 
 The failures are the ones the recorded attempts encode: an invented
 `dict.update`, a missing `Fixed` match arm, a stub that returns `Ok`
 unconditionally, a duplicated truncation helper with an off-by-one, a
-hardcoded Erlang origin, and a 1-based pagination bug. A/B/C/D are the harness
-distinguishing the recorded attempts; they are not a measured improvement from
-the toolkit, because no model was involved.
+hardcoded Erlang origin, and a 1-based pagination bug. The second B attempt
+fixes only the reported problem (compile error, failed assertion) and leaves a
+remaining defect, which is why it still fails. A/B/C/D distinguish recorded
+attempts; they are not a measured improvement from the toolkit, because no
+model was involved.
 
 ## Nondeterminism and honesty
 

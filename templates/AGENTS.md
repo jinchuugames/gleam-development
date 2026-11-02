@@ -2,9 +2,9 @@
 AGENTS.md template for a Gleam repository.
 
 Copy this file to the repository root as AGENTS.md and replace every
-<PLACEHOLDER>. Keep it under about 60 lines: it is loaded into every agent
-session, so it should hold only what an agent cannot discover in one or two
-commands. The detailed workflow lives in the gleam-development skill; do not
+<PLACEHOLDER>. This template is under about 90 lines including this comment;
+keep it in that range, because it is loaded into every agent session and should
+hold only what an agent cannot discover in one or two commands. The detailed workflow lives in the gleam-development skill; do not
 paste that skill here.
 -->
 

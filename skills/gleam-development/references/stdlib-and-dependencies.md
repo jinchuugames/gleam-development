@@ -55,7 +55,8 @@ Where concepts live:
   `fold`, `delete`, `drop`, `keys`, `values`, `to_list`, `from_list`).
 - Unique membership: `gleam/set`.
 - Text: `gleam/string` (bare names such as `append`, `split`, `trim`, `replace`).
-- Numbers: `gleam/int`, `gleam/float` (`parse`, `to_string`, `round`, `ceil`).
+- Numbers: `gleam/int` (`parse`, `to_string`, `sum`, `clamp`, `divide`),
+  `gleam/float` (`parse`, `to_string`, `round`, `ceiling`, `truncate`).
 - Failure: `gleam/result` (`map`, `map_error`, `try`, `unwrap`, `flatten`, `all`).
 - Absence: `gleam/option` (`map`, `unwrap`, `then`, `or`, `to_result`).
 - Untrusted input, JSON-shaped data: `gleam/dynamic` and

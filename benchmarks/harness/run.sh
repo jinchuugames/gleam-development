@@ -55,16 +55,22 @@ start_time=$(date +%s)
 results_file="$out/results.jsonl"
 : > "$results_file"
 
-pick_variant() { # $1 condition, $2 attempt
+# Which recorded attempt is replayed. A never retries; B starts blind and
+# repairs from compiler/test output; C and D start with lookup available.
+pick_variant() { # $1 condition, $2 attempt, $3 task dir
   local condition="$1" attempt="$2" tdir="$3"
   if [ "$condition" = "A" ]; then echo baseline; return; fi
-  if [ "$attempt" -gt 1 ]; then
-    [ -d "$tdir/agent/feedback" ] && { echo feedback; return; }
+  if [ "$attempt" -eq 1 ]; then
+    case "$condition" in
+      B) echo baseline ;;
+      *) [ -d "$tdir/agent/docs" ] && echo docs || echo baseline ;;
+    esac
+    return
   fi
-  case "$condition" in
-    B) echo baseline ;;
-    *) [ -d "$tdir/agent/docs" ] && echo docs || echo baseline ;;
-  esac
+  if [ "$attempt" -ge 3 ] && [ -d "$tdir/agent/repair" ]; then echo repair; return; fi
+  [ -d "$tdir/agent/feedback" ] && { echo feedback; return; }
+  [ -d "$tdir/agent/docs" ] && { echo docs; return; }
+  echo baseline
 }
 
 # Highest number of executed tests across the target summaries in a log.
@@ -83,9 +89,9 @@ executed_tests() {
 }
 
 # Refuse a run whose hidden tests did not actually execute.
-verify_discovery() { # $1 work dir, $2 meta, $3 test output, $4 label
-  local work="$1" meta="$2" log="$3" label="$4"
-  local hidden_module entry expected passed
+verify_discovery() { # $1 work, $2 meta, $3 test log, $4 label, $5 visible-run count
+  local work="$1" meta="$2" log="$3" label="$4" visible="$5"
+  local hidden_module entry expected passed delta
   hidden_module=$(jq -r '.hidden_module' "$meta")
   entry=$(jq -r '.entry_module // empty' "$meta")
   if [ -z "$entry" ]; then
@@ -103,14 +109,17 @@ verify_discovery() { # $1 work dir, $2 meta, $3 test output, $4 label
     echo "DISCOVERY FAILURE ($label): gleeunit reported no tests" >&2
     return 1
   fi
-  expected=$(jq -r '(.visible_tests // 0) + (.hidden_tests // 0)' "$meta")
+  expected=$(jq -r '.hidden_tests // 0' "$meta")
   passed=$(executed_tests "$log")
   if [ "$passed" -eq 0 ]; then
-    echo "DISCOVERY FAILURE ($label): no test summary in output" >&2
+    echo "DISCOVERY FAILURE ($label): no test summary after injecting hidden tests" >&2
     return 1
   fi
-  if [ "$passed" -lt "$expected" ]; then
-    echo "DISCOVERY FAILURE ($label): $passed tests executed, expected at least $expected" >&2
+  # The hidden module's tests must show up as a delta over the visible run, so
+  # an agent cannot satisfy the guard by adding passing tests of its own.
+  delta=$((passed - visible))
+  if [ "$delta" -lt "$expected" ]; then
+    echo "DISCOVERY FAILURE ($label): hidden run executed $delta more tests than the visible run, expected at least $expected" >&2
     return 1
   fi
   return 0
@@ -147,9 +156,17 @@ run_case() { # $1 task, $2 condition
   local metrics_file="$case_dir/agent-metrics.json"
   local log="$case_dir/last.log"
   local variant attempt started ended build_ok test_ok hidden_ok=false first_pass=false
-  local builds=0 tests=0
+  local builds=0 tests=0 visible_executed=0
+  local envs=()
 
   rm -rf "$case_dir"; mkdir -p "$case_dir"
+  # Stage the toolkit outside the repository tree so no path handed to the
+  # agent leads back to benchmarks/tasks/*/hidden/.
+  local stage="$out/.stage/$condition-$task"
+  rm -rf "$stage"; mkdir -p "$stage"
+  cp -R "$root/skills/gleam-development" "$stage/skill"
+  cp "$root/scripts/gleam-api" "$stage/gleam-api"
+  chmod +x "$stage/gleam-api"
   cp -R "$tdir/work" "$work"
   git -C "$work" init -q
   git -C "$work" add -A
@@ -161,10 +178,10 @@ run_case() { # $1 task, $2 condition
     case "$condition" in
       C|D)
         printf '\n\nYou may look up installed APIs:\n  %s sig <module>.<function>\n  %s find <name>\n  %s search <text>\n' \
-          "$root/scripts/gleam-api" "$root/scripts/gleam-api" "$root/scripts/gleam-api" ;;
+          "$stage/gleam-api" "$stage/gleam-api" "$stage/gleam-api" ;;
     esac
     if [ "$condition" = "D" ]; then
-      printf '\nFollow the Gleam development skill at:\n  %s/skills/gleam-development/SKILL.md\n' "$root"
+      printf '\nFollow the Gleam development skill at:\n  %s/skill/SKILL.md\n' "$stage"
     fi
   } > "$prompt_file"
 
@@ -174,23 +191,37 @@ run_case() { # $1 task, $2 condition
 
   for ((attempt = 1; attempt <= attempts; attempt++)); do
     variant=$(pick_variant "$condition" "$attempt" "$tdir")
-    (
-      cd "$work" && \
-      BENCH_TASK="$task" BENCH_CONDITION="$condition" BENCH_ATTEMPT="$attempt" \
-      BENCH_VARIANT="$variant" BENCH_PROMPT_FILE="$prompt_file" \
-      BENCH_FEEDBACK_FILE="$feedback_file" \
-      BENCH_SKILL_FILE="$root/skills/gleam-development/SKILL.md" \
-      BENCH_DOCS_CMD="$root/scripts/gleam-api" BENCH_METRICS="$metrics_file" \
-      "$agent"
-    ) >> "$log" 2>&1 </dev/null
-    local agent_status=$?
+    # Environment is built per condition: A never sees the toolkit.
+    envs=(
+      BENCH_TASK="$task" BENCH_CONDITION="$condition" BENCH_ATTEMPT="$attempt"
+      BENCH_VARIANT="$variant" BENCH_PROMPT_FILE="$prompt_file"
+      BENCH_FEEDBACK_FILE="$feedback_file" BENCH_METRICS="$metrics_file"
+    )
+    case "$condition" in
+      C|D) envs+=(BENCH_DOCS_CMD="$stage/gleam-api") ;;
+    esac
+    if [ "$condition" = "D" ]; then
+      envs+=(BENCH_SKILL_FILE="$stage/skill/SKILL.md")
+    fi
+    local agent_status
+    if command -v timeout >/dev/null 2>&1; then
+      ( cd "$work" && env "${envs[@]}" timeout "${BENCH_AGENT_TIMEOUT:-600}" "$agent" ) >> "$log" 2>&1 </dev/null
+    else
+      ( cd "$work" && env "${envs[@]}" "$agent" ) >> "$log" 2>&1 </dev/null
+    fi
+    agent_status=$?
     echo "== attempt $attempt ($variant) agent exit $agent_status" >> "$log"
+    if [ "$agent_status" -eq 124 ]; then
+      echo "== attempt $attempt timed out after ${BENCH_AGENT_TIMEOUT:-600}s" >> "$log"
+    fi
 
     build_ok=false; test_ok=false
+    visible_executed=0
     if build_targets "$work" "$meta" "$case_dir/build.log"; then build_ok=true; fi
     builds=$((builds + 1))
     if $build_ok; then
       if run_tests "$work" "$meta" "$case_dir/visible.log"; then test_ok=true; fi
+      visible_executed=$(executed_tests "$case_dir/visible.log")
       tests=$((tests + 1))
     fi
 
@@ -203,15 +234,18 @@ run_case() { # $1 task, $2 condition
         mkdir -p "$work/hidden_disabled"
         mv "$work/test/$(jq -r '.hidden_module' "$meta").gleam" "$work/hidden_disabled/"
       fi
+      if [ "${BENCH_BREAK_DISCOVERY:-}" = "hollow" ]; then
+        printf 'pub fn placeholder_test() {\n  Nil\n}\n' > "$work/test/$(jq -r '.hidden_module' "$meta").gleam"
+      fi
       if [ "${BENCH_BREAK_DISCOVERY:-}" = "no_entry" ]; then
         entry="$(sed -n 's/^name[[:space:]]*=[[:space:]]*"\([^"]*\)".*/\1/p' "$work/gleam.toml")_test"
         sed -i '' 's/gleeunit\.main()/Nil/' "$work/test/$entry.gleam" 2>/dev/null ||
           sed -i 's/gleeunit\.main()/Nil/' "$work/test/$entry.gleam"
       fi
       if run_tests "$work" "$meta" "$case_dir/hidden.log"; then
-        verify_discovery "$work" "$meta" "$case_dir/hidden.log" "$task/$condition" && hidden_ok=true
+        verify_discovery "$work" "$meta" "$case_dir/hidden.log" "$task/$condition" "$visible_executed" && hidden_ok=true
       else
-        verify_discovery "$work" "$meta" "$case_dir/hidden.log" "$task/$condition" || true
+        verify_discovery "$work" "$meta" "$case_dir/hidden.log" "$task/$condition" "$visible_executed" || true
       fi
     fi
     if [ "$attempt" -eq 1 ]; then first_pass=$hidden_ok; fi
@@ -227,13 +261,16 @@ run_case() { # $1 task, $2 condition
   done
   ended=$(date +%s)
 
-  local modified unrelated duplicates regression files_read
-  modified=$(git -C "$work" status --porcelain | awk '{print $2}' | grep -v '^build/' | wc -l | tr -d ' ')
+  local modified unrelated duplicates regression files_read changed
+  # ls-files handles paths with spaces and excludes ignored build output.
+  changed=$(git -C "$work" ls-files -m -o --exclude-standard | grep -v '^build/' || true)
+  modified=$(printf '%s\n' "$changed" | grep -c . || true)
   unrelated=$(
-    git -C "$work" status --porcelain | awk '{print $2}' | grep -v '^build/' |
+    printf '%s\n' "$changed" |
     while IFS= read -r f; do
+      [ -z "$f" ] && continue
       if ! jq -e --arg f "$f" '.touch | index($f) != null' "$meta" >/dev/null; then echo "$f"; fi
-    done | wc -l | tr -d ' '
+    done | grep -c . || true
   )
   duplicates=0
   for symbol in $(jq -r '.forbidden[]?' "$meta"); do
@@ -272,9 +309,58 @@ task_list() {
 }
 
 if $self_check; then
-  echo "self-check: a hidden test that never executes must be refused"
+  echo "self-check: conditions must not leak the toolkit and the guard must refuse unexecuted tests"
   status=0
-  for mode in missing no_entry; do
+
+  probe=$(mktemp)
+  cat > "$probe" <<'PROBE'
+#!/usr/bin/env bash
+env | grep '^BENCH_' | sort > "${BENCH_PROBE_OUT:?}"
+PROBE
+  chmod +x "$probe"
+
+  probe_condition() { # $1 condition
+    local condition="$1"
+    local probe_out="$out/probe-$condition.txt"
+    BENCH_PROBE_OUT="$probe_out" "$0" --tasks word-frequency --conditions "$condition" \
+      --agent "$probe" --out "$out/selfcheck-probe-$condition" >/dev/null 2>&1 || true
+    cat "$probe_out" 2>/dev/null
+  }
+
+  a_env=$(probe_condition A)
+  if printf '%s\n' "$a_env" | grep -q '^BENCH_\(DOCS_CMD\|SKILL_FILE\)='; then
+    echo "  BASELINE LEAK: condition A received toolkit paths" >&2
+    status=1
+  else
+    echo "  condition A receives no toolkit paths"
+  fi
+
+  c_env=$(probe_condition C)
+  if printf '%s\n' "$c_env" | grep -q '^BENCH_DOCS_CMD=' &&
+     ! printf '%s\n' "$c_env" | grep -q '^BENCH_SKILL_FILE='; then
+    echo "  condition C receives the lookup command only"
+  else
+    echo "  CONDITION C MISMATCH" >&2
+    status=1
+  fi
+
+  d_env=$(probe_condition D)
+  if printf '%s\n' "$d_env" | grep -q '^BENCH_SKILL_FILE=' &&
+     printf '%s\n' "$d_env" | grep -q '^BENCH_DOCS_CMD='; then
+    echo "  condition D receives the skill and the lookup command"
+  else
+    echo "  CONDITION D MISMATCH" >&2
+    status=1
+  fi
+
+  if printf '%s\n%s\n%s\n' "$a_env" "$c_env" "$d_env" | grep -F -q "$root"; then
+    echo "  PATH LEAK: an agent was handed a path inside the repository" >&2
+    status=1
+  else
+    echo "  no agent environment contains the repository root"
+  fi
+
+  for mode in missing no_entry hollow; do
     BENCH_BREAK_DISCOVERY="$mode" "$0" --tasks word-frequency --conditions C --out "$out/selfcheck-$mode" \
       > "$out/selfcheck-$mode.log" 2>&1 || true
     if grep -q "DISCOVERY FAILURE" "$out/selfcheck-$mode.log"; then
@@ -284,11 +370,25 @@ if $self_check; then
       status=1
     fi
   done
+
+  slow=$(mktemp)
+  printf '#!/usr/bin/env bash\nsleep 5\n' > "$slow"
+  chmod +x "$slow"
+  BENCH_AGENT_TIMEOUT=1 "$0" --tasks word-frequency --conditions B --agent "$slow" \
+    --max-attempts 1 --out "$out/selfcheck-timeout" >/dev/null 2>&1 || true
+  if grep -q "timed out" "$out/selfcheck-timeout/B/word-frequency/last.log"; then
+    echo "  agent timeout is recorded"
+  else
+    echo "  AGENT TIMEOUT NOT RECORDED" >&2
+    status=1
+  fi
+  rm -f "$probe" "$slow"
+
   if [ $status -ne 0 ]; then
     echo "self-check FAILED" >&2
     exit 1
   fi
-  echo "self-check passed: discovery guard refuses runs whose tests did not execute"
+  echo "self-check passed: conditions are separated, paths are staged, and the discovery guard refuses runs whose tests did not execute"
   exit 0
 fi
 

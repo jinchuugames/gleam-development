@@ -22,7 +22,7 @@ args=()
 while [ $# -gt 0 ]; do
   case "$1" in
     --json) json=true; shift ;;
-    --dir) dir="$2"; shift 2 ;;
+    --dir) dir="${2:?--dir requires a path}"; shift 2 ;;
     -h|--help)
       sed -n '2,20p' "$0" | sed 's/^# \{0,1\}//'
       exit 0 ;;
@@ -86,10 +86,13 @@ extract() {
       }
       kind = ""; name = ""; sigline = ""; doc = ""; attrs = ""; collecting = 0
     }
-    # documentation block directly above a declaration
+    # documentation block directly above a declaration; comments inside a
+    # type body document the variant, not the type, so they are skipped here
     /^[ \t]*\/\/\// {
-      t = $0; sub(/^[ \t]*\/\/\/[ ]?/, "", t)
-      doc = doc (doc == "" ? "" : "\n") t
+      if (!collecting) {
+        t = $0; sub(/^[ \t]*\/\/\/[ ]?/, "", t)
+        doc = doc (doc == "" ? "" : "\n") t
+      }
       next
     }
     /^@target\(/ { attrs = attrs (attrs == "" ? "" : " ") $0; next }
@@ -241,12 +244,13 @@ case "$command" in
     records | awk -v FS='\037' -v OFS='\037' -v n="$1" '$2 == n' | show symbol "$1" ;;
   search)
     [ $# -ge 1 ] || { echo "usage: gleam-api search <text>" >&2; exit 2; }
-    records | awk -v FS='\037' -v OFS='\037' -v q="$1" '
+    query="$*"
+    records | awk -v FS='\037' -v OFS='\037' -v q="$query" '
       BEGIN { n = split(tolower(q), words, " ") }
       { hay = tolower($2 " " $4 " " $5 " " $9)
         for (i = 1; i <= n; i++) if (!index(hay, words[i])) next
         print }
-    ' | show "symbol or documentation" "$1" ;;
+    ' | show "symbol or documentation" "$query" ;;
   type)
     [ $# -ge 1 ] || { echo "usage: gleam-api type <name>" >&2; exit 2; }
     records | awk -v FS='\037' -v OFS='\037' -v n="$1" '($1 == "type" || $1 == "opaque type") && $2 == n' | show type "$1" ;;

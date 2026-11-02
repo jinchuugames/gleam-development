@@ -57,18 +57,53 @@ done
 
 step "documentation lookup against a pinned project"
 sample="$scratch/word-frequency"
-out=$("$root/scripts/gleam-api" sig gleam/dict.upsert --dir "$sample")
-printf '%s\n' "$out" | grep -q 'gleam_stdlib 1.0.5' || {
-  echo "lookup did not report the pinned stdlib version" >&2
+api="$root/scripts/gleam-api"
+
+assert_contains() { # $1 haystack, $2 needle, $3 label
+  printf '%s\n' "$1" | grep -F -q "$2" || {
+    printf '%s\n' "$1" | head -5
+    echo "LOOKUP FAILURE: $3 did not contain: $2" >&2
+    exit 1
+  }
+  echo "  $3"
+}
+
+assert_contains "$("$api" packages --dir "$sample")" "gleam_stdlib 1.0.5" "packages reports the pinned version"
+assert_contains "$("$api" sig gleam/dict.upsert --dir "$sample")" "pub fn upsert(" "sig returns the real signature"
+assert_contains "$("$api" sig gleam/dict.upsert --dir "$sample")" "gleam_stdlib 1.0.5" "sig names the package and version"
+assert_contains "$("$api" find upsert --dir "$sample")" "gleam/dict" "find returns the owning module"
+assert_contains "$("$api" type Dict --dir "$sample")" "pub type Dict(key, value)" "type returns the custom type"
+assert_contains "$("$api" module gleam/dict --dir "$sample")" "pub fn upsert(" "module lists public symbols"
+
+single=$("$api" search upsert --dir "$sample")
+multi=$("$api" search remove a key --dir "$sample")
+quoted=$("$api" search "remove a key" --dir "$sample")
+assert_contains "$single" "upsert" "single-word search finds the symbol"
+[ "$multi" = "$quoted" ] || {
+  echo "LOOKUP FAILURE: unquoted multi-word search differs from the quoted form" >&2
   exit 1
 }
-printf '%s\n' "$out" | grep -q 'gleam/dict' || { echo "lookup did not name the module" >&2; exit 1; }
-if "$root/scripts/gleam-api" find dict.update --dir "$sample" >/dev/null 2>&1; then
-  echo "lookup wrongly claimed dict.update exists" >&2
+echo "  multi-word search ANDs every word"
+
+json=$("$api" find upsert --json --dir "$sample")
+printf '%s\n' "$json" | jq -e '.[0] | .package == "gleam_stdlib" and .version == "1.0.5" and (.signature | startswith("pub fn upsert"))' >/dev/null || {
+  echo "LOOKUP FAILURE: --json output is not the documented shape" >&2
+  printf '%s\n' "$json" | head -3
+  exit 1
+}
+echo "  --json returns package, version, and signature"
+
+if "$api" find dict.update --dir "$sample" >/dev/null 2>&1; then
+  echo "LOOKUP FAILURE: find claimed dict.update exists" >&2
   exit 1
 fi
-"$root/scripts/gleam-api" find dict.update --dir "$sample" 2>/dev/null || true
-echo "  find/sig/type behave against the pinned sources"
+echo "  absent symbol exits non-zero"
+
+if "$api" sig gleam/list.upsert --dir "$sample" >/dev/null 2>&1; then
+  echo "LOOKUP FAILURE: sig found upsert in the wrong module" >&2
+  exit 1
+fi
+echo "  wrong-module lookup exits non-zero"
 
 step "benchmark self-check"
 "$root/benchmarks/harness/run.sh" --self-check --out "$scratch/bench-selfcheck"
