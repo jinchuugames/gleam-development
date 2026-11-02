@@ -1,0 +1,265 @@
+#!/usr/bin/env bash
+# gleam-api: look up real public APIs from a pinned Gleam project.
+#
+# Reads the dependency sources the Gleam compiler downloaded into
+# build/packages (plus the project's own src/) and reports an exact
+# signature with the owning package and locked version. No network, no
+# extra dependency, no mutation of the project it inspects.
+#
+#   gleam-api packages
+#   gleam-api find <name>
+#   gleam-api search <text>
+#   gleam-api type <name>
+#   gleam-api module <gleam/module>
+#   gleam-api sig <module.name>
+#
+# Options: --json, --dir <project> (default: current directory).
+set -euo pipefail
+
+json=false
+dir="$PWD"
+args=()
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --json) json=true; shift ;;
+    --dir) dir="$2"; shift 2 ;;
+    -h|--help)
+      sed -n '2,20p' "$0" | sed 's/^# \{0,1\}//'
+      exit 0 ;;
+    --) shift; args+=("$@"); break ;;
+    -*) echo "gleam-api: unknown option $1" >&2; exit 2 ;;
+    *) args+=("$1"); shift ;;
+  esac
+done
+command="${args[0]:-}"
+if [ ${#args[@]} -gt 0 ]; then
+  set -- "${args[@]}"; shift
+else
+  set --
+fi
+
+if [ ! -f "$dir/gleam.toml" ]; then
+  echo "gleam-api: no gleam.toml in $dir (pass --dir <project>)" >&2
+  exit 2
+fi
+
+sources=()
+[ -d "$dir/build/packages" ] && sources+=("$dir/build/packages")
+[ -d "$dir/src" ] && sources+=("$dir/src")
+if [ ${#sources[@]} -eq 0 ]; then
+  echo "gleam-api: no sources found. Run 'gleam build' (or 'gleam deps download') first." >&2
+  exit 2
+fi
+
+project_name=$(awk -F'"' '/^name[[:space:]]*=/{print $2; exit}' "$dir/gleam.toml")
+project_version=$(awk -F'"' '/^version[[:space:]]*=/{print $2; exit}' "$dir/gleam.toml")
+
+# Package/version lookup: manifest.toml is the lock file the compiler obeys.
+# (bash 3.2 on macOS has no associative arrays, so grep the lock file.)
+pkg_version() {
+  [ -f "$dir/manifest.toml" ] || return 0
+  sed -n "s/^ *{ name = \"$1\", version = \"\\([^\"]*\\)\".*/\\1/p" "$dir/manifest.toml" | head -1
+}
+
+# Extract public declarations from Gleam sources. One record per symbol,
+# fields joined by unit separators: kind, name, line, signature, doc,
+# attributes, package, version, module, file.
+extract() {
+  local file="$1" pkg="$2" ver="$3" module="$4"
+  awk -v pkg="$pkg" -v ver="$ver" -v module="$module" -v file="$file" '
+    function pdepth(s,   i, c, d) {
+      d = 0
+      for (i = 1; i <= length(s); i++) {
+        c = substr(s, i, 1)
+        if (c == "(") d++
+        else if (c == ")") d--
+      }
+      return d
+    }
+    function flush() {
+      if (kind != "") {
+        # one physical line per record: encode newlines, decode when printing
+        sig = sigline; gsub(/\n/, "\\n", sig); gsub(/[ \t]+/, " ", sig); sub(/ \{$/, "", sig)
+        d = doc; gsub(/\n/, "\\n", d); gsub(/\t/, " ", d)
+        printf "%s\037%s\037%s\037%s\037%s\037%s\037%s\037%s\037%s\037%s\n",
+          kind, name, startline, sig, d, attrs, pkg, ver, module, file
+      }
+      kind = ""; name = ""; sigline = ""; doc = ""; attrs = ""; collecting = 0
+    }
+    # documentation block directly above a declaration
+    /^[ \t]*\/\/\// {
+      t = $0; sub(/^[ \t]*\/\/\/[ ]?/, "", t)
+      doc = doc (doc == "" ? "" : "\n") t
+      next
+    }
+    /^@target\(/ { attrs = attrs (attrs == "" ? "" : " ") $0; next }
+    /^@deprecated\(/ { attrs = attrs (attrs == "" ? "" : " ") $0; next }
+    /^pub (opaque )?type / {
+      # keep the attached documentation across flush()
+      held = doc; doc = ""
+      flush()
+      kind = ($2 == "opaque") ? "opaque type" : "type"
+      name = $0; sub(/^pub (opaque )?type /, "", name); sub(/[ ({].*$/, "", name)
+      startline = NR; sigline = $0; doc = held
+      if ($0 ~ /\{/ || pdepth($0) > 0) collecting = 1; else flush()
+      next
+    }
+    /^pub (fn|const) / {
+      held = doc; doc = ""
+      flush()
+      kind = ($2 == "fn") ? "fn" : "const"
+      name = $0; sub(/^pub (fn|const) /, "", name); sub(/[(= ].*$/, "", name); sub(/:.*$/, "", name)
+      startline = NR; sigline = $0; doc = held
+      if (pdepth($0) == 0) flush(); else collecting = 1
+      next
+    }
+    collecting {
+      sigline = sigline "\n" $0
+      if (kind == "type" || kind == "opaque type") {
+        if ($0 ~ /^}/) flush()
+      } else if (kind == "fn" || kind == "const") {
+        if (pdepth(sigline) == 0) flush()
+      }
+      next
+    }
+    # any other non-blank line ends a documentation block
+    { if ($0 !~ /^[ \t]*$/) { doc = ""; attrs = "" } }
+    END { flush() }
+  ' "$file"
+}
+
+records() {
+  local path pkg ver module f rel
+  for root in "${sources[@]}"; do
+    while IFS= read -r f; do
+      case "$root" in
+        */build/packages)
+          rel="${f#"$root"/}"; pkg="${rel%%/*}"; rel="${rel#"$pkg"}"
+          rel="${rel#/src/}"; module="${rel%.gleam}"
+          ver="$(pkg_version "$pkg")"; ver="${ver:-unknown}" ;;
+        *) pkg="$project_name"; ver="$project_version"
+           rel="${f#"$root"/}"; module="${rel%.gleam}"
+           ver="$(pkg_version "$pkg")"; ver="${ver:-$project_version}" ;;
+      esac
+      extract "$f" "$pkg" "$ver" "$module"
+    done < <(find "$root" -name '*.gleam' -type f | sort)
+  done
+}
+
+# Single-line signature collapsed for terminal output.
+oneline() { printf '%s\n' "$1" | tr '\n' ' ' | sed -E 's/[[:space:]]+/ /g; s/\( /(/g; s/,+[[:space:]]*\)/)/g; s/ \)/)/g; s/^ //; s/ $//'; }
+
+# Functions print on one line; custom types keep their variants, re-indented.
+pretty_sig() {
+  local kind="$1" sig="$2"
+  case "$kind" in
+    type|"opaque type")
+      printf '%s\n' "$sig" | sed -E 's/^ +//' |
+        awk 'NR == 1 { print; next }
+             $0 == "}" { print "}"; next }
+             { print "  " $0 }' ;;
+    *) oneline "$sig" ;;
+  esac
+}
+
+doclines=6
+header_printed=false
+
+emit_text() {
+  local kind="$1" name="$2" line="$3" sig="$4" doc="$5" attrs="$6" pkg="$7" ver="$8" module="$9" file="${10}"
+  # module listing: one header, then compact signature lines
+  if [ "$doclines" -eq 0 ]; then
+    if ! $header_printed; then
+      printf '%s %s  %s\n' "$pkg" "$ver" "$module"
+      header_printed=true
+    fi
+    printf '  %s  (%s:%s)\n' "$(pretty_sig "$kind" "$sig" | tr '\n' ' ' | sed -E 's/[[:space:]]+/ /g')" "$file" "$line"
+    return
+  fi
+  printf '%s %s  %s  (%s:%s)\n' "$pkg" "$ver" "$module" "$file" "$line"
+  [ -n "$attrs" ] && printf '  %s\n' "$(oneline "$attrs")"
+  printf '%s\n' "$(pretty_sig "$kind" "$sig")" | sed 's/^/  /'
+  if [ -n "$doc" ]; then
+    printf '%s\n' "$doc" | sed -E 's/^[[:space:]]*$/|/; s/^/  | /; s/^  \| \|$/  |/' | awk -v n="$doclines" 'NR <= n'
+  fi
+  printf '\n'
+}
+
+to_json() {
+  local kind="$1" name="$2" line="$3" sig="$4" doc="$5" attrs="$6" pkg="$7" ver="$8" module="$9" file="${10}"
+  jq -n --arg kind "$kind" --arg name "$name" --arg line "$line" --arg sig "$sig" \
+        --arg doc "$doc" --arg attrs "$attrs" --arg pkg "$pkg" --arg ver "$ver" \
+        --arg module "$module" --arg file "$file" \
+    '{package:$pkg, version:$ver, module:$module, kind:$kind, name:$name,
+      signature:($sig|gsub("\n";" ")|gsub("[ ]+";" ")|gsub(" $" ;"")), documentation:$doc,
+      attributes:$attrs, file:$file, line:($line|tonumber)}'
+}
+
+format_all() { # reads records from stdin
+  local first=true
+  $json && printf '['
+  while IFS=$'\037' read -r kind name line sig doc attrs pkg ver module file; do
+    [ -z "$kind" ] && continue
+    sig="${sig//\\n/$'\n'}"; doc="${doc//\\n/$'\n'}"
+    if $json; then
+      $first || printf ','; first=false
+      to_json "$kind" "$name" "$line" "$sig" "$doc" "$attrs" "$pkg" "$ver" "$module" "$file"
+    else
+      emit_text "$kind" "$name" "$line" "$sig" "$doc" "$attrs" "$pkg" "$ver" "$module" "$file"
+    fi
+  done
+  if $json; then printf ']\n'; fi
+  return 0
+}
+
+# Run a record filter, refusing to look successful when nothing matched.
+show() { # $1 = what, $2 = query; filter program on stdin
+  local what="$1" q="$2" filtered
+  filtered="$(cat)"
+  if [ -z "$filtered" ]; then
+    echo "gleam-api: no public $what matching '$q' in $dir" >&2
+    echo "hint: 'gleam-api search <text>' finds by name or documentation; run 'gleam build' if dependencies are not downloaded" >&2
+    exit 1
+  fi
+  printf '%s\n' "$filtered" | format_all
+}
+
+case "$command" in
+  packages)
+    printf 'compiler: %s\n' "$(gleam --version 2>/dev/null || echo 'gleam not on PATH')"
+    printf 'project:  %s %s\n' "$project_name" "${project_version:-?}"
+    printf '\n'
+    if [ -f "$dir/manifest.toml" ]; then
+      printf 'pinned packages (manifest.toml):\n'
+      sed -n 's/^ *{ name = "\([^"]*\)", version = "\([^"]*\)".*/  \1 \2/p' "$dir/manifest.toml" | sort
+    else
+      printf 'pinned packages: none (no manifest.toml; run gleam build)\n'
+    fi
+    ;;
+  find)
+    [ $# -ge 1 ] || { echo "usage: gleam-api find <name>" >&2; exit 2; }
+    records | awk -v FS='\037' -v OFS='\037' -v n="$1" '$2 == n' | show symbol "$1" ;;
+  search)
+    [ $# -ge 1 ] || { echo "usage: gleam-api search <text>" >&2; exit 2; }
+    records | awk -v FS='\037' -v OFS='\037' -v q="$1" '
+      BEGIN { n = split(tolower(q), words, " ") }
+      { hay = tolower($2 " " $4 " " $5 " " $9)
+        for (i = 1; i <= n; i++) if (!index(hay, words[i])) next
+        print }
+    ' | show "symbol or documentation" "$1" ;;
+  type)
+    [ $# -ge 1 ] || { echo "usage: gleam-api type <name>" >&2; exit 2; }
+    records | awk -v FS='\037' -v OFS='\037' -v n="$1" '($1 == "type" || $1 == "opaque type") && $2 == n' | show type "$1" ;;
+  module)
+    [ $# -ge 1 ] || { echo "usage: gleam-api module <gleam/module>" >&2; exit 2; }
+    doclines=0
+    records | awk -v FS='\037' -v OFS='\037' -v m="$1" '$9 == m' | show module "$1" ;;
+  sig|fn)
+    [ $# -ge 1 ] || { echo "usage: gleam-api sig <module.name>" >&2; exit 2; }
+    mod="${1%.*}"; sym="${1##*.}"
+    records | awk -v FS='\037' -v OFS='\037' -v m="$mod" -v n="$sym" '$9 == m && $2 == n' | show symbol "$1" ;;
+  "")
+    sed -n '2,20p' "$0" | sed 's/^# \{0,1\}//'; exit 2 ;;
+  *)
+    echo "gleam-api: unknown command '$command'" >&2; exit 2 ;;
+esac

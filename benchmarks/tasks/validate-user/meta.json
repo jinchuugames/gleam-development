@@ -1,0 +1,19 @@
+{
+  "id": "validate-user",
+  "title": "Registration validation with Result errors",
+  "targets": [
+    "erlang"
+  ],
+  "entry_module": "validate_user_test",
+  "hidden_module": "zz_hidden_test",
+  "hidden_tests": 4,
+  "visible_tests": 1,
+  "touch": [
+    "src/registration.gleam"
+  ],
+  "forbidden": [],
+  "covers": [
+    "result-validation",
+    "string-normalisation"
+  ]
+}

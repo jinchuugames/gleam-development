@@ -1,0 +1,21 @@
+{
+  "id": "reuse-format",
+  "title": "Report headlines that reuse text formatting",
+  "targets": [
+    "erlang"
+  ],
+  "entry_module": "reuse_format_test",
+  "hidden_module": "zz_hidden_test",
+  "hidden_tests": 3,
+  "visible_tests": 1,
+  "touch": [
+    "src/report.gleam"
+  ],
+  "forbidden": [
+    "shorten_impl"
+  ],
+  "covers": [
+    "multi-module-reuse",
+    "duplicate-detection"
+  ]
+}
