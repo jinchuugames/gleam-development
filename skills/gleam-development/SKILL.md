@@ -20,17 +20,19 @@ Find the code that should change, and the code that already does the job.
 2. Locate module ownership: `ls src/`, `grep -rn "pub fn " src/`. Match the
    module that already owns the concept.
 3. **Search before writing.** Agents duplicate code they could have reused.
-   Before adding a function, run all three:
+   Before adding a function, run all four:
 
    ```sh
    grep -rn "<concept>" src test      # names, doc comments, tests that mention it
    grep -rn "^pub fn " src            # existing public implementations
+   gleam-api dupes                    # bodies you already have under another name
    gleam-api search <concept>         # installed dependencies
    ```
 
-   If an equivalent exists, reuse it or extend it where it lives. Do not copy
-   it into a new module. Before changing an existing function's signature, list
-   its callers: `grep -rn "<function_name>" src test`.
+   `dupes` compares function bodies in `src/` and reports pairs that are mostly
+   the same lines. If an equivalent exists, reuse it or extend it where it
+   lives. Do not copy it into a new module. Before changing an existing
+   function's signature, list its callers: `grep -rn "<function_name>" src test`.
 
 4. Read the nearby tests for the module you are changing. They define current
    behaviour, including the cases nobody documented.
@@ -125,8 +127,12 @@ Details: `references/testing.md`.
 
 Report: behaviour implemented or preserved; modules changed; public API
 changes; commands run with results (`build`, `test`, both targets); tests
-discovered and their count; remaining risks and anything you could not verify.
-Do not claim a behaviour is correct because it compiles.
+discovered and their count; any security-relevant surface you touched (auth, PII,
+data in a public URL) and what you verified about it; remaining risks and
+anything you could not verify. A diff that type-checks and passes tests can
+still expose data: the compiler proves shape, not intent.
+Do not claim a behaviour is correct because it compiles. When the build is
+green and the value is wrong, `references/debugging.md` has the loop.
 
 ## References
 
@@ -135,6 +141,8 @@ Do not claim a behaviour is correct because it compiles.
 | `references/idiomatic-gleam.md` | writing new modules, reviewing a diff for un-Gleam patterns |
 | `references/stdlib-and-dependencies.md` | unsure which stdlib function or dependency version to use |
 | `references/testing.md` | adding or fixing tests, or tests are not being discovered |
+| `references/debugging.md` | something fails, a value is wrong, or a bug compiles and survives the build |
+| `references/frontend.md` | a Lustre UI: server component or client island, drag and drop, animation, Web Components |
 | `references/architecture.md` | deciding module boundaries, error types, where effects live |
 | `references/otp-patterns.md` | tempted to add a process, supervisor, or shared mutable state |
 | `references/beam-and-javascript.md` | dual-target code, externals, `@target`, runtime differences |

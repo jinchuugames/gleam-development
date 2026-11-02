@@ -1,0 +1,21 @@
+{
+  "id": "js-safe-amounts",
+  "title": "Amount parsing that stays exact on the Erlang and JavaScript targets",
+  "targets": [
+    "erlang",
+    "javascript"
+  ],
+  "entry_module": "js_safe_amounts_test",
+  "hidden_module": "zz_hidden_test",
+  "hidden_tests": 3,
+  "visible_tests": 1,
+  "touch": [
+    "src/amount.gleam"
+  ],
+  "forbidden": [],
+  "covers": [
+    "beam-javascript-compatibility",
+    "integer-precision",
+    "behavioural-bug"
+  ]
+}

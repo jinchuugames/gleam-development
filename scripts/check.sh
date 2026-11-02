@@ -109,6 +109,55 @@ if "$api" sig gleam/list.upsert --dir "$sample" >/dev/null 2>&1; then
 fi
 echo "  wrong-module lookup exits non-zero"
 
+step "reuse detection"
+# Two modules holding the same helper, one line apart: the copy an agent writes
+# instead of reusing the original. `dupes` reads text, so the probe project does
+# not need to compile.
+dupe_probe="$scratch/dupe-probe"
+mkdir -p "$dupe_probe/src"
+printf 'name = "dupe_probe"\nversion = "1.0.0"\ntarget = "erlang"\n' > "$dupe_probe/gleam.toml"
+cat > "$dupe_probe/src/report.gleam" <<'GLEAM'
+import gleam/string
+
+pub fn shorten(text: String, max: Int) -> String {
+  let trimmed = string.trim(text)
+  let size = string.length(trimmed)
+  case size <= max {
+    True -> trimmed
+    False -> string.slice(trimmed, at_index: 0, length: max) <> "..."
+  }
+}
+GLEAM
+cat > "$dupe_probe/src/report_extra.gleam" <<'GLEAM'
+import gleam/string
+
+// Copied from report.shorten and tweaked by one character: the duplicate an
+// agent writes when it does not look for the original first.
+pub fn shorten_copy(text: String, max: Int) -> String {
+  let trimmed = string.trim(text)
+  let size = string.length(trimmed)
+  case size <= max + 1 {
+    True -> trimmed
+    False -> string.slice(trimmed, at_index: 0, length: max) <> "..."
+  }
+}
+GLEAM
+dupes=$("$api" dupes --dir "$dupe_probe")
+assert_contains "$dupes" "shorten_copy" "dupes reports a copied helper"
+assert_contains "$dupes" "report.gleam:3 shorten" "dupes names the original with its line"
+clean=$("$api" dupes --dir "$root/examples/inventory")
+assert_contains "$clean" "no near-duplicate function bodies" "a clean project reports none"
+printf '%s\n' "$clean" | grep -q '~' && {
+  echo "REUSE FAILURE: a clean project produced duplicate pairs" >&2
+  exit 1
+}
+"$api" dupes --json --dir "$dupe_probe" |
+  jq -e '.[0] | .similarity > 0.6 and (.a.symbol | contains("shorten")) and (.b.symbol | contains("shorten"))' >/dev/null || {
+  echo "REUSE FAILURE: dupes --json is not the documented shape" >&2
+  exit 1
+}
+echo "  --json returns similarity and both symbols"
+
 step "recorded attempt variants compile"
 mkdir -p "$scratch/variants"
 for taskdir in "$root"/benchmarks/tasks/*/; do

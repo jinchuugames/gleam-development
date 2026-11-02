@@ -48,6 +48,7 @@ Do not write a standard-library or dependency call from memory. Verify it:
 ```sh
 gleam-api sig <module>.<function>   # or: gleam-api find <name>
 gleam-api type <TypeName>
+gleam-api dupes                     # before adding a helper: is it already here?
 gleam-api packages
 ```
 

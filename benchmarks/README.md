@@ -33,6 +33,9 @@ Hidden tests are injected only after an attempt finishes, then removed.
 | `reuse-format` | multi-module change, reuse of an existing implementation, duplicate detection |
 | `target-split` | Erlang/JavaScript target compatibility, `@target` gating |
 | `bugfix-pagination` | bug fix that compiles but is wrong on a boundary |
+| `boundary-expiry` | boundary discipline: the clock arrives as an argument, inclusive expiry, clamping |
+| `multi-module-transfers` | a change across two modules that must reuse a rule owned by a third |
+| `js-safe-amounts` | Erlang/JavaScript behavioural compatibility: `2^53` precision and integer formatting |
 
 Every task has a `work/` project, a `prompt.md`, hidden tests in `hidden/`, and
 recorded attempts in `agent/`. A task's hidden tests are never present in the
@@ -125,8 +128,9 @@ It probes each condition's environment (A must receive no toolkit path, C the
 lookup command only, D both, and no path may contain the repository root),
 breaks discovery in three ways (hidden test outside `test/`, an entry module
 that stops calling `gleeunit.main()`, and a hollow hidden test that adds one
-trivial pass instead of the expected tests), and checks that a hanging agent is
-recorded as a timeout. It fails unless every check holds.
+trivial pass instead of the expected tests), checks that a hanging agent is
+recorded as a timeout, and checks that an adapter which writes no metrics file
+still gets its row, with `files_read: null`. It fails unless every check holds.
 
 ## Running
 
@@ -154,7 +158,7 @@ one.
 ## Fixture results on this machine
 
 Measured 2026-11-02, Gleam 1.19.2, OTP 29, Node 23.11.1, `gleam_stdlib` 1.0.5,
-`gleeunit` 1.11.0, fixture agent, 6 tasks × 4 conditions (24 runs):
+`gleeunit` 1.11.0, fixture agent, 9 tasks × 4 conditions (36 runs):
 
 | Task | A final | B first → final | C first → final | D first → final |
 | --- | --- | --- | --- | --- |
@@ -164,7 +168,10 @@ Measured 2026-11-02, Gleam 1.19.2, OTP 29, Node 23.11.1, `gleam_stdlib` 1.0.5,
 | `reuse-format` | fail | fail → pass (3 attempts) | pass | pass |
 | `target-split` | fail | fail → pass (3 attempts) | pass | pass |
 | `bugfix-pagination` | fail | fail → pass (3 attempts) | pass | pass |
-| **totals** | **0/6** | **0/6 → 6/6** | **6/6** | **6/6** |
+| `boundary-expiry` | fail | fail → pass (3 attempts) | pass | pass |
+| `multi-module-transfers` | fail | fail → pass (3 attempts) | pass | pass |
+| `js-safe-amounts` | fail | fail → pass (3 attempts) | pass | pass |
+| **totals** | **0/9** | **0/9 → 9/9** | **9/9** | **9/9** |
 
 Every B run takes three attempts: the first fails, the recorded repair still
 fails the acceptance tests, and the final correction passes. That is the
@@ -173,11 +180,19 @@ compiler-feedback cycle, not a single correct file replayed.
 The failures are the ones the recorded attempts encode: an invented
 `dict.update`, a missing `Fixed` match arm, a stub that returns `Ok`
 unconditionally, a duplicated truncation helper with an off-by-one, a
-hardcoded Erlang origin, and a 1-based pagination bug. The second B attempt
+hardcoded Erlang origin, a 1-based pagination bug, an expiry that is still valid
+at its own boundary second with a countdown that runs past zero, a copied
+quantity rule with the batch function left unimplemented, and an amount parser
+that accepts a number the JavaScript target cannot hold. The second B attempt
 fixes only the reported problem (compile error, failed assertion) and leaves a
 remaining defect, which is why it still fails. A/B/C/D distinguish recorded
 attempts; they are not a measured improvement from the toolkit, because no
 model was involved.
+
+`duplicated_implementations` is not a dead column: the two tasks with a
+`forbidden` list (`reuse-format`, `multi-module-transfers`) report `dups=1` for
+condition A, because their recorded first attempt copies the helper. Conditions
+that end on the repaired file report `dups=0`.
 
 ## Nondeterminism and honesty
 

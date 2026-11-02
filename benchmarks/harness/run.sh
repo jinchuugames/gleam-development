@@ -417,7 +417,21 @@ PROBE
     echo "  MISSING TIMEOUT NOT REPORTED" >&2
     status=1
   fi
-  rm -f "$probe" "$slow"
+  # An adapter that reports no metrics still has to appear in the results.
+  quiet=$(mktemp)
+  printf '#!/usr/bin/env bash\n# deliberately writes no $BENCH_METRICS file\nexit 0\n' > "$quiet"
+  chmod +x "$quiet"
+  BENCH_TIMEOUT_BIN= "$0" --tasks word-frequency --conditions A --agent "$quiet" \
+    --max-attempts 1 --out "$out/selfcheck-nometrics" >/dev/null 2>&1 || true
+  if jq -e '.results | length == 1 and .[0].files_read == null and .[0].final_pass == false' \
+      "$out/selfcheck-nometrics/results.json" >/dev/null 2>&1; then
+    echo "  an adapter that reports no metrics is still recorded"
+  else
+    echo "  MISSING METRICS ROW" >&2
+    status=1
+  fi
+
+  rm -f "$probe" "$slow" "$quiet"
 
   if [ $status -ne 0 ]; then
     echo "self-check FAILED" >&2

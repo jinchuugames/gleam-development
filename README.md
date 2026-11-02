@@ -14,14 +14,15 @@ repair. This repository packages that loop.
 
 | Path | What it is |
 | --- | --- |
-| `skills/gleam-development/` | The skill: `SKILL.md` plus six reference files loaded only when relevant |
+| `skills/gleam-development/` | The skill: `SKILL.md` plus eight reference files loaded only when relevant |
 | `templates/AGENTS.md` | Copyable `AGENTS.md` for a Gleam repository, with placeholders to fill |
 | `scripts/gleam-api` | API lookup over installed package sources; reports package and pinned version |
 | `scripts/check.sh` | Verifies formatting, examples, fixtures, lookup, and the benchmark guard |
 | `examples/order-pipeline` | Pure domain: custom types, state transitions, `Result` validation, pricing |
 | `examples/inventory` | Architecture: pure core, store boundary, why an actor is not justified |
-| `benchmarks/` | Model-agnostic harness, six tasks, hidden tests, discovery guard |
+| `benchmarks/` | Model-agnostic harness, nine tasks, hidden tests, discovery guard |
 | `docs/research.md` | What the ecosystem actually provides, verified on 2026-11-02 |
+| `docs/tradeoffs.md` | Where Gleam is weaker: deployment, the BEAM, ecosystem, the JavaScript target, debugging |
 
 ## Requirements
 
@@ -102,6 +103,7 @@ gleam-api find upsert                  # every public symbol with that name
 gleam-api type Dict                    # custom type with variants
 gleam-api search remove a key          # search names and documentation
 gleam-api module gleam/list            # one line per public symbol
+gleam-api dupes                        # project functions that are mostly the same lines
 gleam-api sig gleam/dict.upsert --json # machine-readable
 gleam-api find dict.update             # exits 1: it does not exist in 1.0.5
 ```
@@ -110,6 +112,22 @@ Run it inside the project (or pass `--dir <project>`). It reads
 `build/packages/<package>/src/**/*.gleam` for dependencies and `src/` for your
 own modules, and takes versions from `manifest.toml`. No network, no extra
 dependency, no project mutation.
+
+`gleam-api dupes` answers the other half of the reuse question. The author of
+the source articles names duplicate code as their most common review feedback,
+and `find`/`search` only help when you know the symbol's name. `dupes` compares
+function bodies in the project's own `src/` and prints pairs that are mostly the
+same lines, which catches a helper copied under a different name:
+
+```
+function bodies that are mostly the same lines:
+  src/report_extra.gleam:5 shorten_copy  ~  src/report.gleam:3 shorten   (0.80, 5/5 lines)
+```
+
+It compares text, ignores bodies under five lines (thin wrappers collide by
+chance), and reports nothing when the project is clean. It is a report, not a
+gate: exit status is 0 either way. A copy that renames every variable and
+rewrites a third of its lines is not reported — it scores like unrelated code.
 
 Example output on a project pinning `gleam_stdlib 1.0.5`:
 
@@ -166,16 +184,22 @@ OTP 29, Node 23.11.1, `gleam_stdlib` 1.0.5, `gleeunit` 1.11.0.
 - `scripts/gleam-api` reports real signatures from the pinned stdlib, ANDs every
   word of a multi-word search, returns valid `--json`, and exits 1 for
   `dict.update` and for a symbol looked up in the wrong module.
+- `gleam-api dupes` reports a copied helper seeded in a probe project at 0.80
+  similarity with both symbols and line numbers, reports nothing across the 33
+  functions of the two examples, and returns `[]` as JSON when a project is
+  clean.
 - `benchmarks/harness/run.sh --self-check` proves the baseline environment
   receives no toolkit path, that staged paths never reach the repository, that
   the discovery guard refuses a missing, an unexecuted, and a hollow hidden
-  test, and that a hanging agent is recorded as a timeout.
-- The full fixture benchmark (6 tasks × 4 conditions): A 0/6, B 0/6 first
-  attempt and 6/6 after three attempts (repair, then the remaining fix), C 6/6,
-  D 6/6. Table and failure modes are in `benchmarks/README.md`.
+  test, that a hanging agent is recorded as a timeout, and that an adapter
+  writing no metrics file still gets a row with `files_read: null`.
+- The full fixture benchmark (9 tasks × 4 conditions): A 0/9, B 0/9 first
+  attempt and 9/9 after three attempts (repair, then the remaining fix), C 9/9,
+  D 9/9. Table and failure modes are in `benchmarks/README.md`.
 - `scripts/check.sh` passes end to end: formatting, 57 example tests, every
-  task's correct attempt running its hidden tests, the full lookup surface, the
-  discovery guard, and the fixture benchmark.
+  task's correct attempt running its hidden tests on both targets where the
+  task claims two, the full lookup surface, reuse detection, the discovery
+  guard, the harness self-check, and the fixture benchmark.
 
 ## Limitations
 
@@ -191,12 +215,16 @@ OTP 29, Node 23.11.1, `gleam_stdlib` 1.0.5, `gleeunit` 1.11.0.
 - **Version awareness depends on the project being built.** `gleam-api` reads
   what the compiler downloaded. Before a first build there is nothing to read,
   and it says so rather than guessing.
-- **The benchmark is small.** Six tasks with a fixture agent validate the
+- **The benchmark is small.** Nine tasks with a fixture agent validate the
   harness. A run against a real agent is one sample; do not read statistical
   significance into it.
 - **The skill is per-agent.** Each agent has its own skill or instruction
   mechanism; this repository provides the content and the install commands, not
   a universal plugin.
+- **Gleam itself has costs this toolkit cannot remove.** Deployment with native
+  dependencies, a smaller ecosystem, no macros, and a JavaScript target that is
+  a different runtime: `docs/tradeoffs.md` states each one and marks whether it
+  was reproduced here or is an author's report.
 
 ## Adding a task or changing the skill
 
