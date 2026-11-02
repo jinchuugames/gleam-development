@@ -33,6 +33,10 @@ Rules of thumb:
 
 - A public type should make an invalid state unrepresentable where it is cheap
   to do so. If `Placed` always has a timestamp, put it in the variant.
+- Adding a field or a variant is a safe refactor: every constructor and every
+  `case` that does not cover it stops compiling, so the error list is the change
+  list. Work through it; do not silence it with a `_ ->` arm, which turns
+  exhaustiveness off for every future variant as well.
 - Name the error type after the failure, not after the function:
   `EmptyCart`, `NegativeQuantity(Int)`, `UnknownSku(String)`.
 - Do not expose internal types as `pub` unless a caller must construct or match

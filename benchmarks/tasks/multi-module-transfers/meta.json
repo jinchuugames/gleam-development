@@ -1,0 +1,24 @@
+{
+  "id": "multi-module-transfers",
+  "title": "Stock transfers across three modules, reusing the shared quantity rule",
+  "targets": [
+    "erlang"
+  ],
+  "entry_module": "multi_module_transfers_test",
+  "hidden_module": "zz_hidden_test",
+  "hidden_tests": 3,
+  "visible_tests": 1,
+  "touch": [
+    "src/transfer.gleam",
+    "src/batch.gleam"
+  ],
+  "forbidden": [
+    "clamp_impl",
+    "clamp_copy"
+  ],
+  "covers": [
+    "multi-module",
+    "code-reuse",
+    "duplicate-detection"
+  ]
+}

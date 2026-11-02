@@ -1,0 +1,20 @@
+{
+  "id": "boundary-expiry",
+  "title": "Session expiry with an injected clock and an inclusive boundary",
+  "targets": [
+    "erlang"
+  ],
+  "entry_module": "boundary_expiry_test",
+  "hidden_module": "zz_hidden_test",
+  "hidden_tests": 3,
+  "visible_tests": 1,
+  "touch": [
+    "src/session.gleam"
+  ],
+  "forbidden": [],
+  "covers": [
+    "boundary-discipline",
+    "injected-clock",
+    "off-by-one-boundary"
+  ]
+}

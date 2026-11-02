@@ -188,6 +188,76 @@ linter in the core toolchain. Both are wired into the skill's loop.
   `gleam export package-interface` for the local package; dependency target
   support is proved by building both targets rather than by guessing.
 
+## Cross-target numeric behaviour — verified
+
+Measured with one module run on both targets (`gleam run` and
+`gleam run --target javascript`, gleam 1.19.2, OTP 29, Node 23.11.1):
+
+| Expression | Erlang | JavaScript |
+| --- | --- | --- |
+| `int.parse("9007199254740993")` | `Ok(9007199254740993)` | `Ok(9007199254740992)` |
+| literal `9_007_199_254_740_993` | `9007199254740993` | `9007199254740992` |
+| `9_007_199_254_740_992 + 1` | `9007199254740993` | `9007199254740992` |
+| `float.to_string(0.000001)` | `1.0e-6` | `0.000001` |
+| `float.to_string(-0.0)` | `-0.0` | `0.0` |
+
+Both targets compile the same source without a warning. The JavaScript target
+still returns `Ok` for a value it cannot hold. `9_007_199_254_740_991`
+(`2^53 - 1`) is the largest integer both targets represent exactly. Everything
+else in the float probe (`12.05`, `0.1 +. 0.2`, `1.0e21`, `100.0 /. 3.0`)
+printed identically, so exponent notation for small values and negative zero are
+the observed formatting differences, not a general wildcard.
+
+## Language surface facts — verified
+
+- Gleam has no `if` expression and no grouping parentheses around an expression
+  (`(a <> b)`); the compiler suggests a `case` and `{}` respectively.
+- `<`, `>` and `<=` are `Int` only: comparing two strings is a type error and
+  the fix is `string.compare(a, b) -> order.Order`.
+- A custom type named `Error` declares variants, not a constructor named
+  `Error`; `Error(x)` in a `Result` is the `Result` constructor.
+- `gleam/io` 1.0.5 exposes `print`, `print_error`, `println`, `println_error`
+  only. There is no `io.debug`. `string.inspect(term)` renders any value.
+- `let assert Ok(value) = result as "message"` and `panic as "message"` compile
+  and carry the message into the failure.
+- `gleam shell` starts an Erlang REPL with the project's modules loaded: for a
+  probe module defining `double(n: Int) -> Int`, `intprobe:double(21).` returned
+  `42`.
+
+## Lustre 5.7.1 — verified
+
+Pinned in a probe project (`gleam add lustre` → `lustre 5.7.1`, with `houdini
+1.2.1`), built for both targets, and read through `scripts/gleam-api`:
+
+- `lustre/server_component`: `element`, `script`, `route`, `method`
+  (`TransportMethod = WebSocket | ServerSentEvents | Polling`), `include`,
+  `csrf_token`, `emit`, `select`, `subject`, `pid`, `register_subject`.
+- `lustre/component`: `open_shadow_root`, `adopt_styles`, `delegates_focus`,
+  `form_associated`, `part`, `parts`, `exportparts`, `slot`, `default_slot`,
+  `named_slot`, `prerender`, `on_attribute_change`, `on_property_change`.
+- `lustre/runtime/app.default_config` has `open_shadow_root: True` and
+  `adopt_styles: True`.
+- `lustre/event` has click, mouse, keyboard, input, change, check, submit,
+  focus, blur and the generic `on(name, decoder)`. It has **no** drag-and-drop
+  event helpers. There is no helper for animating DOM state either; the only
+  animation-shaped symbols in the package are SVG SMIL elements in
+  `lustre/element/svg` (`animate`, `animate_motion`, `animate_transform`).
+- `lustre/dev/simulate`: `simple`, `application`, `start`, `message`, `click`,
+  `input`, `submit`, `event`, `model`, `view`, `history`. A drag state machine
+  written with it ran green on both targets: `3 passed, no failures` on
+  `gleam test` and on `gleam test --target javascript`.
+
+## `gleam-api dupes` — verified behaviour
+
+The duplicate report is a Dice coefficient over normalized body lines of the
+project's own `src/` functions, minimum five lines per body, threshold 0.6.
+Calibration on this machine: 0 pairs across `examples/inventory` (16 functions)
+and `examples/order-pipeline` (17), 1 pair across the 729 top-level functions of
+`lustre 5.7.1`'s own source (two five-line JSON builders that differ by one
+line), and 1 pair for a seeded copy scoring 0.80. Masking identifiers before
+comparing was tried and rejected: it made every four-line wrapper in
+`lustre/attribute` look identical, which is noise rather than a finding.
+
 ## Research inputs from the field
 
 Two articles by Curling IO were supplied as research input. They are author

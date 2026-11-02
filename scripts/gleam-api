@@ -12,6 +12,7 @@
 #   gleam-api type <name>
 #   gleam-api module <gleam/module>
 #   gleam-api sig <module.name>
+#   gleam-api dupes
 #
 # Options: --json, --dir <project> (default: current directory).
 set -euo pipefail
@@ -24,7 +25,7 @@ while [ $# -gt 0 ]; do
     --json) json=true; shift ;;
     --dir) dir="${2:?--dir requires a path}"; shift 2 ;;
     -h|--help)
-      sed -n '2,20p' "$0" | sed 's/^# \{0,1\}//'
+      sed -n '2,17p' "$0" | sed 's/^# \{0,1\}//'
       exit 0 ;;
     --) shift; args+=("$@"); break ;;
     -*) echo "gleam-api: unknown option $1" >&2; exit 2 ;;
@@ -215,6 +216,79 @@ format_all() { # reads records from stdin
   return 0
 }
 
+# The project's own functions, one record per function:
+# file US name US line US body, with body lines joined by RS so the record
+# stays on one physical line. A function body runs from its declaration to the
+# next line that starts in column zero, which is how gleam format lays out
+# top-level declarations; nothing here needs to count braces.
+project_functions() {
+  [ -d "$dir/src" ] || return 0
+  find "$dir/src" -name '*.gleam' -type f | sort | xargs awk '
+    BEGIN { SEP = "\036" }
+    function flush(   h) {
+      if (!is_fn || body == "") { is_fn = 0; body = ""; return }
+      h = head; sub(/^(pub )?(opaque )?fn /, "", h); sub(/[( ].*$/, "", h)
+      printf "%s\037%s\037%s\037%s\n", file, h, startline, body
+      is_fn = 0; body = ""; head = ""
+    }
+    FNR == 1 { flush(); file = FILENAME }
+    /^[^ \t]/ && NF {
+      flush(); head = $0; startline = FNR
+      is_fn = ($0 ~ /^(pub )?(opaque )?fn [a-z_]/)
+      started = (index($0, "{") > 0)
+      next
+    }
+    {
+      if (!is_fn) next
+      line = $0
+      sub(/^[ \t]+/, "", line); sub(/[ \t]+$/, "", line)
+      if (line == "" || line ~ /^\/\//) next
+      # body, not a signature that wraps onto further lines
+      if (!started) { if (index(line, "{")) started = 1; else next }
+      if (line == "}") next
+      gsub(/[ \t]+/, " ", line)
+      body = body (body == "" ? "" : SEP) line
+    }
+    END { flush() }
+  '
+}
+
+# Pairs of function bodies that are mostly the same lines: the Dice coefficient
+# over the multiset of normalized lines. Body text, not shape: masking
+# identifiers made every thin wrapper look alike, and those are not worth
+# extracting. Bodies under five lines are skipped for the same reason, and a
+# copy that rewrites more than about a third of its lines is not reported.
+# TSV out: score US lines-a US lines-b US a US b, each `file:line name`.
+duplicate_pairs() {
+  awk '
+    BEGIN { FS = "\037"; SEP = "\036" }
+    { n++
+      file[n] = $1; name[n] = $2; line[n] = $3
+      count[n] = split($4, part, SEP)
+      for (i = 1; i <= count[n]; i++) text[n, i] = part[i]
+    }
+    END {
+      for (a = 1; a < n; a++) {
+        for (b = a + 1; b <= n; b++) {
+          if (count[a] < 5 || count[b] < 5) continue
+          for (i = 1; i <= count[a]; i++) seen[text[a, i]]++
+          both = count[a] + count[b]
+          shared = 0
+          for (i = 1; i <= count[b]; i++) {
+            if (seen[text[b, i]] > 0) { seen[text[b, i]]--; shared++ }
+          }
+          for (i = 1; i <= count[a]; i++) seen[text[a, i]] = 0
+          score = 2 * shared / both
+          if (score < 0.6) continue
+          printf "%.2f\037%s\037%s\037%s:%s %s\037%s:%s %s\n",
+            score, count[a], count[b],
+            file[a], line[a], name[a], file[b], line[b], name[b]
+        }
+      }
+    }
+  '
+}
+
 # Run a record filter, refusing to look successful when nothing matched.
 show() { # $1 = what, $2 = query; filter program on stdin
   local what="$1" q="$2" filtered
@@ -262,8 +336,49 @@ case "$command" in
     [ $# -ge 1 ] || { echo "usage: gleam-api sig <module.name>" >&2; exit 2; }
     mod="${1%.*}"; sym="${1##*.}"
     records | awk -v FS='\037' -v OFS='\037' -v m="$mod" -v n="$sym" '$9 == m && $2 == n' | show symbol "$1" ;;
+  dupes)
+    [ -d "$dir/src" ] || {
+      echo "gleam-api: no src/ directory in $dir (pass --dir <project>)" >&2
+      exit 2
+    }
+    scanned=$(project_functions | grep -c . || true)
+    pairs=$(project_functions | duplicate_pairs | sort -rn)
+    if [ -z "$pairs" ]; then
+      if $json; then
+        printf '[]\n'
+      else
+        printf 'gleam-api: no near-duplicate function bodies across %s functions in %s/src\n' "$scanned" "$dir"
+      fi
+      exit 0
+    fi
+    shown=0
+    total=$(printf '%s\n' "$pairs" | grep -c . || true)
+    if $json; then
+      printf '['
+    else
+      printf 'function bodies that are mostly the same lines:\n'
+    fi
+    while IFS=$'\037' read -r score la lb fa fb; do
+      [ -z "$score" ] && continue
+      fa="${fa#"$dir"/}"; fb="${fb#"$dir"/}"
+      if [ "$shown" -ge 20 ]; then
+        $json || printf '  ... %s more pairs; narrow the directory to see them\n' "$((total - shown))"
+        break
+      fi
+      if $json; then
+        [ "$shown" -gt 0 ] && printf ','
+        jq -nc --argjson score "$score" --argjson la "$la" --argjson lb "$lb" \
+          --arg a "$fa" --arg b "$fb" \
+          '{similarity:$score, a:{symbol:$a, lines:$la}, b:{symbol:$b, lines:$lb}}'
+      else
+        printf '  %s  ~  %s   (%s, %s/%s lines)\n' "$fa" "$fb" "$score" "$la" "$lb"
+      fi
+      shown=$((shown + 1))
+    done <<< "$pairs"
+    $json && printf ']\n'
+    exit 0 ;;
   "")
-    sed -n '2,20p' "$0" | sed 's/^# \{0,1\}//'; exit 2 ;;
+    sed -n '2,17p' "$0" | sed 's/^# \{0,1\}//'; exit 2 ;;
   *)
     echo "gleam-api: unknown command '$command'" >&2; exit 2 ;;
 esac
