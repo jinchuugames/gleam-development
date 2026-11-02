@@ -159,14 +159,13 @@ first. That is why it is documented rather than required here; see
 ```
 
 Conditions: A baseline, B with compiler feedback, C with documentation lookup,
-D with the skill. Every task has hidden tests that are injected after each
-attempt and removed again, and the harness refuses a run whose tests did not
-execute (`test/` placement, `gleeunit.main()` present, and the hidden run
-executing at least `hidden_tests` more tests than the visible run). Each
-condition gets only its own environment, and the skill and lookup tool are
-staged outside the repository so no path reaches the hidden tests, and an
-`--out` directory inside the repository is refused. See
-`benchmarks/README.md`.
+D with the skill. The evaluator copies each attempt and adds public fixture tests to that separate copy.
+It removes the copy and its logs before the next attempt.
+The discovery guard checks actual test execution on every target.
+The harness stages the permitted tools outside the repository and rejects an output directory inside the repository.
+Local file separation is not a sandbox. Internet access can expose the public fixture tests.
+A real comparison requires private holdouts and an evaluator outside the agent's access.
+See `benchmarks/README.md` for the limits and result schema.
 
 The bundled agent is a fixture that replays recorded attempts. It exists so the
 harness can be validated without paid API access; its scores are not evidence
@@ -192,7 +191,8 @@ OTP 29, Node 23.11.1, `gleam_stdlib` 1.0.5, `gleeunit` 1.11.0.
   receives no toolkit path, that staged paths never reach the repository, that
   the discovery guard refuses a missing, an unexecuted, and a hollow hidden
   test, that a hanging agent is recorded as a timeout, and that an adapter
-  writing no metrics file still gets a row with `files_read: null`.
+  with no metrics file still gets a row with `files_read: null` and `tokens: null`.
+  Regression checks cover unsafe paths, token transport, retry separation, and discovery on each target.
 - The full fixture benchmark (9 tasks × 4 conditions): A 0/9, B 0/9 first
   attempt and 9/9 after three attempts (repair, then the remaining fix), C 9/9,
   D 9/9. Table and failure modes are in `benchmarks/README.md`.

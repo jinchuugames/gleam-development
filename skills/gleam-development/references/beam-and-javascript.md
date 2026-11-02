@@ -54,7 +54,7 @@ fn system_time() -> Int
 | Processes | full OTP | none; use promises/callbacks or a package |
 | Integers | arbitrary precision | 53-bit safe integers; `int` operations overflow differently |
 | Floats | Erlang float formatting | JavaScript `Number` formatting; `float.to_string` can differ |
-| Dictionary order | not guaranteed | insertion order |
+| Dictionary order | not guaranteed | not guaranteed |
 | String/bytes | UTF-8 binaries | UTF-8 strings; `bit_array` uses `Uint8Array` |
 | Errors | `panic` becomes an exit | `panic` throws an exception |
 | Runtime | `erl`/OTP 29 here | Node 23 by default, `--runtime deno`, `--runtime bun` |

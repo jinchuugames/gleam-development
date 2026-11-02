@@ -1,7 +1,26 @@
 # Idiomatic Gleam
 
-Load this when writing new modules or reviewing a diff for patterns borrowed
-from another language.
+Use this reference for new modules and code reviews.
+
+Source: [Gleam conventions, patterns, and anti-patterns](https://gleam.run/documentation/conventions-patterns-and-anti-patterns/).
+The official guide sets the language conventions. The notes below apply them to this toolkit.
+
+## Official conventions
+
+- Qualify imported functions and constants: `list.map`.
+  Types and constructors can use clear, unqualified imports.
+- Use singular module names and words for acronyms: `Json`.
+- Name conversions `x_to_y`. Omit `x_` when the module supplies it.
+- Use domain names for fallible operations. Reserve `try_` for fallible alternatives.
+- Use `Result` for failure, including `Result(value, Nil)` without error detail.
+- Reuse core package types and operations.
+- Put tool configuration under `[tools.<name>]` in `gleam.toml`.
+- Use `src/` for application code, `test/` for tests, and `dev/` for helpers.
+- Keep modules inside the package namespace. Group them by domain.
+- Match directly instead of a check followed by `let assert`.
+- Use concrete FFI types. Use `Dynamic` for unknown shapes.
+- Separate request construction from response parsing. The caller owns HTTP transport.
+- Use a builder for several optional fields.
 
 ## Translate the instinct, not the syntax
 
@@ -44,13 +63,14 @@ Rules of thumb:
 
 ## Functions
 
-- Explicit parameter types on public functions; inference is fine inside.
+- Annotate parameters and return types on every module function, including private functions.
+  Local expressions can use type inference.
 - Use argument labels (`with fun:`, `in dict:`) when a call site would otherwise
   read as pure positional noise; call with `function(arg, label: value)`.
 - Keep functions small enough to read in one screen. Extract pure helpers
   instead of long `case` bodies.
-- Prefer pattern matching in the function head for one-variant cases and `case`
-  in the body when several variants share work.
+- Match values with `case` or `let` inside the function body.
+  Gleam function parameters do not support destructuring patterns.
 
 ## Pipelines
 

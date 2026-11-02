@@ -3,7 +3,7 @@
 # conditions (A baseline, B compiler feedback, C +docs lookup, D +skill).
 #
 # The harness owns the task fixture, the compiler, and the hidden tests. The
-# agent only ever sees its own work directory.
+# agent receives its work directory and permitted toolkit paths, not a sandbox.
 #
 #   ./run.sh                                   # all tasks, all conditions, mock agent
 #   ./run.sh --tasks cart-totals --conditions A,B
@@ -30,12 +30,17 @@ self_check=false
 
 while [ $# -gt 0 ]; do
   case "$1" in
-    --agent) agent="$2"; shift 2 ;;
-    --tasks) selected="$2"; shift 2 ;;
-    --conditions) conditions="$2"; shift 2 ;;
-    --max-attempts) max_attempts="$2"; shift 2 ;;
-    --out) out="$2"; shift 2 ;;
-    --json) json_out="$2"; shift 2 ;;
+    --agent|--tasks|--conditions|--max-attempts|--out|--json)
+      [ $# -ge 2 ] || { echo "run.sh: $1 requires a value" >&2; exit 2; }
+      case "$1" in
+        --agent) agent="$2" ;;
+        --tasks) selected="$2"; [ -n "$selected" ] || { echo 'run.sh: task list is empty' >&2; exit 2; } ;;
+        --conditions) conditions="$2" ;;
+        --max-attempts) max_attempts="$2" ;;
+        --out) out="$2" ;;
+        --json) json_out="$2" ;;
+      esac
+      shift 2 ;;
     --self-check) self_check=true; shift ;;
     -h|--help) sed -n '2,26p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
     *) echo "run.sh: unknown option $1" >&2; exit 2 ;;
@@ -51,25 +56,78 @@ if [ -z "$TIMEOUT_BIN" ]; then
   echo "run.sh: no timeout or gtimeout on PATH; agent attempts are unbounded (install coreutils, or set BENCH_TIMEOUT_BIN)" >&2
 fi
 
-command -v gleam >/dev/null || { echo "run.sh: gleam not on PATH" >&2; exit 2; }
-command -v jq >/dev/null || { echo "run.sh: jq not on PATH" >&2; exit 2; }
-[ -x "$agent" ] || { echo "run.sh: agent not executable: $agent" >&2; exit 2; }
+fail() { echo "run.sh: $*" >&2; exit 2; }
 
+# Resolve existing ancestors without creating the selected directory.
+absolute_dir() {
+  local path="$1" parent leaf
+  [ ! -L "$path" ] || [ -d "$path" ] || return 1
+  if [ -d "$path" ]; then (cd "$path" && pwd -P); return; fi
+  parent=$(absolute_dir "$(dirname "$path")") || return 1
+  leaf=$(basename "$path")
+  case "$leaf" in
+    .) printf '%s\n' "$parent" ;;
+    ..) dirname "$parent" ;;
+    *) printf '%s/%s\n' "${parent%/}" "$leaf" ;;
+  esac
+}
+
+command -v gleam >/dev/null || fail "gleam is not on PATH"
+command -v jq >/dev/null || fail "jq is not on PATH"
+[ -x "$agent" ] && [ -f "$agent" ] || fail "agent is not executable: $agent"
+agent="$(cd "$(dirname "$agent")" && pwd -P)/$(basename "$agent")"
+case "$max_attempts" in ''|0|*[!0-9]*) fail "--max-attempts requires a positive integer" ;; esac
+# Decimal notation avoids Bash interpreting a leading zero as octal.
+max_attempts=$((10#$max_attempts))
+[ "$max_attempts" -gt 0 ] || fail "--max-attempts requires a positive integer"
+case "$conditions" in ''|,*|*,|*,,*|*[!ABCD,]*) fail "conditions must be A, B, C, or D" ;; esac
+IFS=',' read -r -a condition_list <<< "$conditions"
+for condition in "${condition_list[@]}"; do
+  case "$condition" in A|B|C|D) ;; *) fail "invalid condition: $condition" ;; esac
+done
+if [ -n "$selected" ]; then
+  case "$selected" in ,*|*,|*,,*|*[!a-zA-Z0-9_,-]*) fail "task list contains an invalid ID" ;; esac
+  IFS=',' read -r -a task_ids <<< "$selected"
+else
+  task_ids=()
+  for tdir in "$tasks_dir"/*; do task_ids+=("$(basename "$tdir")"); done
+fi
+for task in "${task_ids[@]}"; do
+  case "$task" in ''|*[!a-zA-Z0-9_-]*) fail "invalid task ID: $task" ;; esac
+  [ -f "$tasks_dir/$task/meta.json" ] || fail "unknown task: $task"
+done
+
+[ -n "$out" ] || fail "--out requires a directory"
+out=$(absolute_dir "$out") || fail "cannot resolve --out"
+[ "$out" != / ] || fail "--out cannot be /"
+root_real=$(cd "$root" && pwd -P)
+case "$out/" in
+  "$root_real"/*) fail "--out must be outside the repository ($root_real)" ;;
+esac
+# Refuse all pre-existing symlinks before opening result files or deleting cases.
+check_output() {
+  [ ! -L "$out" ] || fail "output directory is a symlink: $out"
+  if [ -d "$out" ]; then
+    [ "$(cd "$out" && pwd -P)" = "$out" ] || fail "output directory changed: $out"
+    [ -z "$(find "$out" -type l -print -quit)" ] || fail "output directory contains a symlink: $out"
+  fi
+}
+remove_output() {
+  case "$1" in "$out"/*) ;; *) fail "unsafe deletion target: $1" ;; esac
+  check_output
+  rm -rf -- "$1" || fail "cannot remove $1"
+}
+check_output
+mkdir -p "$out" || fail "cannot create --out: $out"
 compiler_version=$(gleam --version 2>/dev/null | head -1)
 stdlib_version=$(sed -n 's/^ *{ name = "gleam_stdlib", version = "\([^"]*\)".*/\1/p' \
   "$tasks_dir"/*/work/manifest.toml 2>/dev/null | sort -u | paste -sd, -)
-
-mkdir -p "$out"
-out_real=$(cd "$out" && pwd -P)
-root_real=$(cd "$root" && pwd -P)
-case "$out_real/" in
-  "$root_real"/*)
-    echo "run.sh: --out must be outside the repository ($root_real); choose a directory under /tmp" >&2
-    exit 2 ;;
-esac
 start_time=$(date +%s)
 results_file="$out/results.jsonl"
 : > "$results_file"
+# Evaluator artifacts never enter an agent work directory or its case directory.
+evaluator=$(mktemp -d "${TMPDIR:-/tmp}/gleam-evaluator.XXXXXX") || fail "cannot create the evaluator directory"
+trap 'rm -rf -- "$evaluator"' EXIT
 
 # Which recorded attempt is replayed. A never retries; B starts blind and
 # repairs from compiler/test output; C and D start with lookup available.
@@ -90,15 +148,14 @@ pick_variant() { # $1 condition, $2 attempt, $3 task dir
 }
 
 # Highest number of executed tests across the target summaries in a log.
-# Counts passed + failures + skipped, so a failing test still proves execution.
+# Count passed tests and failures; skipped tests do not prove execution.
 executed_tests() {
   awk '
     /[0-9]+ passed/ {
-      p = 0; f = 0; s = 0
+      p = 0; f = 0
       if (match($0, /[0-9]+ passed/)) p = substr($0, RSTART, RLENGTH) + 0
       if (match($0, /[0-9]+ failures?/)) f = substr($0, RSTART, RLENGTH) + 0
-      if (match($0, /[0-9]+ skipped/)) s = substr($0, RSTART, RLENGTH) + 0
-      if (p + f + s > max) max = p + f + s
+      if (p + f > max) max = p + f
     }
     END { print max + 0 }
   ' "$1"
@@ -142,7 +199,7 @@ verify_discovery() { # $1 work, $2 meta, $3 test log, $4 label, $5 visible-run c
 }
 
 build_targets() { # $1 work, $2 meta, $3 log -> status
-  local work="$1" meta="$2" log="$3" targets t status=0
+  local work="$1" meta="$2" log="$3" t status=0
   : > "$log"
   for t in $(jq -r '.targets[]?' "$meta"); do
     echo "== gleam build --target $t" >> "$log"
@@ -156,7 +213,8 @@ run_tests() { # $1 work, $2 meta, $3 log -> status
   : > "$log"
   for t in $(jq -r '.targets[]?' "$meta"); do
     echo "== gleam test --target $t" >> "$log"
-    ( cd "$work" && gleam test --target "$t" ) >> "$log" 2>&1 || status=1
+    ( cd "$work" && gleam test --target "$t" ) > "$log.$t" 2>&1 || status=1
+    cat "$log.$t" >> "$log"
   done
   return $status
 }
@@ -172,17 +230,23 @@ run_case() { # $1 task, $2 condition
   local metrics_file="$case_dir/agent-metrics.json"
   local log="$case_dir/last.log"
   local variant attempt started ended build_ok test_ok hidden_ok=false first_pass=false
-  local builds=0 tests=0 visible_executed=0
+  local builds=0 tests=0
   local envs=()
 
-  rm -rf "$case_dir"; mkdir -p "$case_dir"
+  remove_output "$case_dir"; mkdir -p "$case_dir" || fail "cannot create $case_dir"
   # Stage the toolkit outside the repository tree so no path handed to the
   # agent leads back to benchmarks/tasks/*/hidden/.
   local stage="$out/.stage/$condition-$task"
-  rm -rf "$stage"; mkdir -p "$stage"
-  cp -R "$root/skills/gleam-development" "$stage/skill"
-  cp "$root/scripts/gleam-api" "$stage/gleam-api"
-  chmod +x "$stage/gleam-api"
+  remove_output "$stage"
+  case "$condition" in
+    C|D)
+      mkdir -p "$stage" || fail "cannot create $stage"
+      cp "$root/scripts/gleam-api" "$stage/gleam-api" || fail "cannot stage lookup"
+      chmod +x "$stage/gleam-api" ;;
+  esac
+  if [ "$condition" = "D" ]; then
+    cp -R "$root/skills/gleam-development" "$stage/skill" || fail "cannot stage skill"
+  fi
   cp -R "$tdir/work" "$work"
   git -C "$work" init -q
   git -C "$work" add -A
@@ -219,6 +283,9 @@ run_case() { # $1 task, $2 condition
     if [ "$condition" = "D" ]; then
       envs+=(BENCH_SKILL_FILE="$stage/skill/SKILL.md")
     fi
+    # Remove capability variables inherited from a parent agent session.
+    unset BENCH_DOCS_CMD BENCH_SKILL_FILE
+    : > "$metrics_file"
     local agent_status
     if [ -n "$TIMEOUT_BIN" ]; then
       ( cd "$work" && env "${envs[@]}" "$TIMEOUT_BIN" "${BENCH_AGENT_TIMEOUT:-600}" "$agent" ) >> "$log" 2>&1 </dev/null
@@ -232,41 +299,42 @@ run_case() { # $1 task, $2 condition
     fi
 
     build_ok=false; test_ok=false
-    visible_executed=0
     if build_targets "$work" "$meta" "$case_dir/build.log"; then build_ok=true; fi
     builds=$((builds + 1))
     if $build_ok; then
       if run_tests "$work" "$meta" "$case_dir/visible.log"; then test_ok=true; fi
-      visible_executed=$(executed_tests "$case_dir/visible.log")
       tests=$((tests + 1))
     fi
 
-    # Evaluate hidden tests by injecting them, then remove them again. A build
-    # failure is a failed attempt, not a discovery problem.
+    # Evaluate a separate copy, then discard both compiled tests and their logs.
     hidden_ok=false
     if $build_ok; then
-      cp "$tdir/hidden/$(jq -r '.hidden_module' "$meta").gleam" "$work/test/"
+      local evaluation="$evaluator/attempt" target visible_executed entry
+      mkdir -p "$evaluation"
+      cp -R "$work/." "$evaluation/" || fail "cannot copy the attempt"
+      cp "$tdir/hidden/$(jq -r '.hidden_module' "$meta").gleam" "$evaluation/test/" || fail "cannot copy acceptance tests"
       if [ "${BENCH_BREAK_DISCOVERY:-}" = "missing" ]; then
-        mkdir -p "$work/hidden_disabled"
-        mv "$work/test/$(jq -r '.hidden_module' "$meta").gleam" "$work/hidden_disabled/"
+        mkdir -p "$evaluation/hidden_disabled"
+        mv "$evaluation/test/$(jq -r '.hidden_module' "$meta").gleam" "$evaluation/hidden_disabled/"
       fi
       if [ "${BENCH_BREAK_DISCOVERY:-}" = "hollow" ]; then
-        printf 'pub fn placeholder_test() {\n  Nil\n}\n' > "$work/test/$(jq -r '.hidden_module' "$meta").gleam"
+        printf 'pub fn placeholder_test() {\n  Nil\n}\n' > "$evaluation/test/$(jq -r '.hidden_module' "$meta").gleam"
       fi
       if [ "${BENCH_BREAK_DISCOVERY:-}" = "no_entry" ]; then
-        entry="$(sed -n 's/^name[[:space:]]*=[[:space:]]*"\([^"]*\)".*/\1/p' "$work/gleam.toml")_test"
-        sed -i '' 's/gleeunit\.main()/Nil/' "$work/test/$entry.gleam" 2>/dev/null ||
-          sed -i 's/gleeunit\.main()/Nil/' "$work/test/$entry.gleam"
+        entry="$(jq -r '.entry_module' "$meta")"
+        sed 's/gleeunit\.main()/Nil/' "$evaluation/test/$entry.gleam" > "$evaluation/entry.tmp"
+        mv "$evaluation/entry.tmp" "$evaluation/test/$entry.gleam"
       fi
-      if run_tests "$work" "$meta" "$case_dir/hidden.log"; then
-        verify_discovery "$work" "$meta" "$case_dir/hidden.log" "$task/$condition" "$visible_executed" && hidden_ok=true
-      else
-        verify_discovery "$work" "$meta" "$case_dir/hidden.log" "$task/$condition" "$visible_executed" || true
-      fi
+      if run_tests "$evaluation" "$meta" "$evaluator/hidden.log"; then hidden_ok=true; fi
+      for target in $(jq -r '.targets[]' "$meta"); do
+        visible_executed=$(executed_tests "$case_dir/visible.log.$target")
+        verify_discovery "$evaluation" "$meta" "$evaluator/hidden.log.$target" "$task/$condition/$target" "$visible_executed" || hidden_ok=false
+      done
+      rm -rf -- "$evaluation"
+      rm -f -- "$evaluator"/hidden.log*
     fi
+    [ "$agent_status" -eq 0 ] || hidden_ok=false
     if [ "$attempt" -eq 1 ]; then first_pass=$hidden_ok; fi
-    rm -f "$work/test/$(jq -r '.hidden_module' "$meta").gleam"
-    rm -rf "$work/hidden_disabled"
 
     if $hidden_ok; then break; fi
     {
@@ -292,11 +360,17 @@ run_case() { # $1 task, $2 condition
   for symbol in $(jq -r '.forbidden[]?' "$meta"); do
     if grep -rqw -- "$symbol" "$work/src" 2>/dev/null; then duplicates=$((duplicates + 1)); fi
   done
-  files_read=$(jq -r '.files_read // "null"' "$metrics_file" 2>/dev/null)
-  # An absent or empty metrics file, or a non-numeric value, means "not reported".
-  case "$files_read" in
-    ""|null|*[!0-9]*) files_read=null ;;
-  esac
+  # Counts are non-negative JSON integers. Strings and malformed files are null.
+  local tokens metrics
+  metrics=$(jq -cs '
+    def count: if type == "number" then
+      if . >= 0 and . <= 9007199254740991 and floor == . then . else null end
+      else null end;
+    if length == 1 and (.[0] | type) == "object" then
+      .[0] | {files_read:(.files_read | count), tokens:(.tokens | count)}
+    else {files_read:null, tokens:null} end' "$metrics_file" 2>/dev/null) || metrics='{"files_read":null,"tokens":null}'
+  files_read=$(printf '%s' "$metrics" | jq '.files_read')
+  tokens=$(printf '%s' "$metrics" | jq '.tokens')
   regression=false
   $test_ok && regression=false || regression=true
 
@@ -308,10 +382,10 @@ run_case() { # $1 task, $2 condition
     --argjson attempts_used "$attempts_used" --argjson builds "$builds" --argjson tests "$tests" \
     --argjson wall "$((ended - started))" --argjson modified "$modified" \
     --argjson unrelated "$unrelated" --argjson duplicates "$duplicates" \
-    --argjson regression "$regression" --argjson files_read "$files_read" \
+    --argjson regression "$regression" --argjson files_read "$files_read" --argjson tokens "$tokens" \
     '{task:$task, condition:$condition, first_attempt_pass:$first, final_pass:$final,
       attempts:$attempts_used, compiler_iterations:$builds, test_iterations:$tests,
-      wall_clock_seconds:$wall, files_read:$files_read, files_modified:$modified,
+      wall_clock_seconds:$wall, files_read:$files_read, tokens:$tokens, files_modified:$modified,
       unrelated_changes:$unrelated, duplicated_implementations:$duplicates,
       behavioural_regression:$regression}' >> "$results_file"
 
@@ -324,15 +398,11 @@ run_case() { # $1 task, $2 condition
   fi
 }
 
-task_list() {
-  if [ -n "$selected" ]; then printf '%s\n' "$selected" | tr ',' '\n'; else ls "$tasks_dir"; fi
-}
-
 if $self_check; then
   echo "self-check: conditions must not leak the toolkit and the guard must refuse unexecuted tests"
   status=0
 
-  probe=$(mktemp)
+  probe=$(mktemp "$out/probe.XXXXXX")
   cat > "$probe" <<'PROBE'
 #!/usr/bin/env bash
 env | grep '^BENCH_' | sort > "${BENCH_PROBE_OUT:?}"
@@ -391,7 +461,7 @@ PROBE
     fi
   done
 
-  slow=$(mktemp)
+  slow=$(mktemp "$out/slow.XXXXXX")
   printf '#!/usr/bin/env bash\nsleep 5\n' > "$slow"
   chmod +x "$slow"
   if [ -n "$TIMEOUT_BIN" ]; then
@@ -408,7 +478,7 @@ PROBE
   fi
 
   # With the timeout explicitly disabled the run must still complete and say so.
-  BENCH_TIMEOUT_BIN= BENCH_AGENT_TIMEOUT=1 "$0" --tasks word-frequency --conditions A \
+  BENCH_TIMEOUT_BIN='' BENCH_AGENT_TIMEOUT=1 "$0" --tasks word-frequency --conditions A \
     --agent "$slow" --max-attempts 1 --out "$out/selfcheck-no-timeout" \
     > "$out/selfcheck-no-timeout.log" 2>&1 || true
   if grep -q "attempts are unbounded" "$out/selfcheck-no-timeout.log"; then
@@ -418,10 +488,10 @@ PROBE
     status=1
   fi
   # An adapter that reports no metrics still has to appear in the results.
-  quiet=$(mktemp)
-  printf '#!/usr/bin/env bash\n# deliberately writes no $BENCH_METRICS file\nexit 0\n' > "$quiet"
+  quiet=$(mktemp "$out/quiet.XXXXXX")
+  printf '#!/usr/bin/env bash\nexit 0\n' > "$quiet"
   chmod +x "$quiet"
-  BENCH_TIMEOUT_BIN= "$0" --tasks word-frequency --conditions A --agent "$quiet" \
+  BENCH_TIMEOUT_BIN='' "$0" --tasks word-frequency --conditions A --agent "$quiet" \
     --max-attempts 1 --out "$out/selfcheck-nometrics" >/dev/null 2>&1 || true
   if jq -e '.results | length == 1 and .[0].files_read == null and .[0].final_pass == false' \
       "$out/selfcheck-nometrics/results.json" >/dev/null 2>&1; then
@@ -431,7 +501,11 @@ PROBE
     status=1
   fi
 
-  rm -f "$probe" "$slow" "$quiet"
+  remove_output "$probe"
+  remove_output "$slow"
+  remove_output "$quiet"
+
+  "$here/regression-check.sh" || status=1
 
   if [ $status -ne 0 ]; then
     echo "self-check FAILED" >&2
@@ -441,9 +515,8 @@ PROBE
   exit 0
 fi
 
-for task in $(task_list); do
-  [ -f "$tasks_dir/$task/meta.json" ] || { echo "run.sh: unknown task $task" >&2; exit 2; }
-  for condition in $(printf '%s\n' "$conditions" | tr ',' ' '); do
+for task in "${task_ids[@]}"; do
+  for condition in "${condition_list[@]}"; do
     run_case "$task" "$condition"
   done
 done

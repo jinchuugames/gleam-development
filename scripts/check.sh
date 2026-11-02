@@ -3,9 +3,8 @@
 set -euo pipefail
 
 root=$(cd "$(dirname "$0")/.." && pwd)
-scratch="${TMPDIR:-/tmp}/gleam-development-check"
-rm -rf "$scratch"
-mkdir -p "$scratch"
+scratch=$(mktemp -d "${TMPDIR:-/tmp}/gleam-development-check.XXXXXX")
+trap 'rm -rf -- "$scratch"' EXIT
 
 step() { printf '\n== %s\n' "$1"; }
 
@@ -13,6 +12,10 @@ step "shell syntax"
 bash -n "$root/scripts/gleam-api"
 bash -n "$root/benchmarks/harness/run.sh"
 bash -n "$root/benchmarks/harness/mock-agent.sh"
+bash -n "$root/benchmarks/harness/regression-check.sh"
+if command -v shellcheck >/dev/null; then
+  shellcheck "$root/scripts/check.sh" "$root/scripts/gleam-api" "$root"/benchmarks/harness/*.sh
+fi
 
 step "formatting"
 for dir in "$root"/examples/*/ "$root"/benchmarks/tasks/*/work/; do
@@ -113,7 +116,7 @@ step "reuse detection"
 # Two modules holding the same helper, one line apart: the copy an agent writes
 # instead of reusing the original. `dupes` reads text, so the probe project does
 # not need to compile.
-dupe_probe="$scratch/dupe-probe"
+dupe_probe="$scratch/dupe probe"
 mkdir -p "$dupe_probe/src"
 printf 'name = "dupe_probe"\nversion = "1.0.0"\ntarget = "erlang"\n' > "$dupe_probe/gleam.toml"
 cat > "$dupe_probe/src/report.gleam" <<'GLEAM'
@@ -182,7 +185,7 @@ if "$root/benchmarks/harness/run.sh" --tasks word-frequency --conditions A \
   echo "GUARD FAILURE: an in-repository --out was accepted" >&2
   exit 1
 fi
-[ -d "$root/benchmark-out" ] && rm -rf "$root/benchmark-out"
+[ ! -e "$root/benchmark-out" ] || { echo "GUARD FAILURE: --out created a repository directory" >&2; exit 1; }
 echo "  in-repository --out is refused"
 
 step "benchmark self-check"

@@ -22,7 +22,7 @@ people who had already shipped a Gleam system.
 | Cost | Status | Evidence |
 | --- | --- | --- |
 | Fewer libraries, younger ecosystem | reproduced | `docs/research.md`: `gleamdoc` at 0.4.1, single maintainer; no maintained offline code-intelligence server exists |
-| Agents write worse first drafts | reproduced | the toolkit's own fixtures encode the failure: an invented `dict.update`, a hardcoded origin, a duplicated helper |
+| First attempts can contain incorrect APIs or rules | fixture scenarios | the recorded attempts include an invented `dict.update`, a fixed origin, and a duplicate helper |
 | Packaging native dependencies for an Erlang release is awkward | author report | NIF for SQLite plus release packaging; we have not built a release with a NIF |
 | The BEAM is a cost unless you use it | author report | they kept durable job state in SQLite and needed little OTP-specific behaviour |
 | No macros, no derives | reproduced | Gleam 1.19.2 has no macro system; serialisation and codegen are separate steps |
@@ -76,13 +76,11 @@ more single-maintainer packages in the dependency graph. This toolkit's answer
 is to verify installed source rather than trust training data, but that does not
 make a package maintained.
 
-## Agents write worse Gleam on the first attempt
+## First-attempt failures in the fixtures
 
-**Reproduced, in this repository's own fixtures.** The benchmark records the
-failures agents actually produced in these tasks: a call to `dict.update`, which
-does not exist in `gleam_stdlib` 1.0.5; a hardcoded `"erlang"` origin in a
-dual-target module; a truncation helper copied from an existing module with an
-off-by-one; a validation stub that returns `Ok` unconditionally.
+**Fixture scenarios.** The recorded attempts contain deliberate failures.
+Examples include an absent `dict.update`, a fixed origin, a duplicate helper, and an unconditional `Ok`.
+These examples validate the harness. They do not measure an agent or compare languages.
 
 **Author report.** They describe the same pattern and the same conclusion: the
 first pass is slower in Gleam than in JavaScript, and the total time to correct

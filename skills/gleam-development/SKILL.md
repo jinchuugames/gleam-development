@@ -5,11 +5,8 @@ description: Use when writing, changing, debugging, or testing Gleam code (.glea
 
 # Gleam development
 
-Gleam has less training data than Go, Rust, TypeScript, or Elixir, so the
-first attempt usually contains something that does not exist: an invented
-standard-library function, a missing import, a type mismatch. Every one of
-those is a compile error, and the compiler is fast. Use it as the feedback
-loop, and verify APIs against installed sources instead of memory.
+Verify unfamiliar APIs against installed sources. Use the compiler and tests to check each change.
+A successful build proves that types fit. Tests check behaviour and test discovery.
 
 ## 1. Discovery (before writing)
 
@@ -86,7 +83,7 @@ list from memory — check each name you are about to write.
 - `Result(a, e)` for recoverable failure with a custom error type; `Option(a)`
   for absence. No exceptions as control flow, no dynamic typing to dodge a
   type.
-- Small public APIs, explicit types on public functions, record labels at call
+- Small public APIs, explicit types on all module functions, record labels at call
   sites when a call has more than one argument of the same type.
 - No new OTP process unless there is a real reason (shared mutable state,
   supervision, timing). An ordinary module with explicit state passed in is

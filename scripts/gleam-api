@@ -133,7 +133,7 @@ extract() {
 }
 
 records() {
-  local path pkg ver module f rel
+  local pkg ver module f rel
   for root in "${sources[@]}"; do
     while IFS= read -r f; do
       case "$root" in
@@ -223,7 +223,8 @@ format_all() { # reads records from stdin
 # top-level declarations; nothing here needs to count braces.
 project_functions() {
   [ -d "$dir/src" ] || return 0
-  find "$dir/src" -name '*.gleam' -type f | sort | xargs awk '
+  # shellcheck disable=SC2016 # This is an AWK program, not a shell expression.
+  find "$dir/src" -name '*.gleam' -type f -print0 | xargs -0 awk '
     BEGIN { SEP = "\036" }
     function flush(   h) {
       if (!is_fn || body == "") { is_fn = 0; body = ""; return }

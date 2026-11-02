@@ -21,7 +21,8 @@ harness; only a real agent run is evidence about an agent.
 A gets one attempt and never sees compiler output. B, C, and D get up to
 `--max-attempts` (default 3) attempts, each followed by `gleam build` and the
 visible tests; the failure output is written to the agent's feedback file.
-Hidden tests are injected only after an attempt finishes, then removed.
+The evaluator copies an attempt after the agent exits. It adds acceptance tests to that separate copy.
+It removes the copy and its logs before the next attempt.
 
 ## Tasks
 
@@ -37,9 +38,19 @@ Hidden tests are injected only after an attempt finishes, then removed.
 | `multi-module-transfers` | a change across two modules that must reuse a rule owned by a third |
 | `js-safe-amounts` | Erlang/JavaScript behavioural compatibility: `2^53` precision and integer formatting |
 
-Every task has a `work/` project, a `prompt.md`, hidden tests in `hidden/`, and
-recorded attempts in `agent/`. A task's hidden tests are never present in the
-agent's work directory.
+Each task has a `work/` project, a `prompt.md`, public fixture tests in `hidden/`, and recorded attempts in `agent/`.
+The evaluator never adds fixture tests to the agent's work directory.
+
+## Public fixtures and private holdouts
+
+The bundled fixture tests are public. They validate the harness; they are not private holdouts for a model study.
+An agent with internet access can obtain these tests from the public repository.
+A separate work directory provides local file separation. It does not provide a filesystem sandbox or network isolation.
+An agent with unrestricted host access can also search other host directories.
+
+A real agent comparison needs private holdout tests in an evaluator that the agent cannot access.
+Use an external sandbox or a separate host for that boundary.
+This harness has no external-holdout interface. Its bundled fixture scores cannot establish model quality.
 
 ## Layout of a task
 
@@ -70,7 +81,7 @@ Which variant is replayed:
 So B's evidence is a distinct partial repair applied from feedback, not the same
 file C reaches first. Two tasks (`validate-user`, `bugfix-pagination`) start
 from a seeded stub or bug, so their `baseline` attempt modifies nothing; the
-other four replay a recorded failed attempt that changes the source.
+other seven replay a recorded failed attempt that changes the source.
 
 ## Agent contract
 
@@ -82,17 +93,25 @@ Any executable works as an agent:
   `BENCH_VARIANT`, `BENCH_FEEDBACK_FILE` (compiler output from the previous
   attempt), `BENCH_METRICS` (write a JSON file here), and only when the
   condition allows it, `BENCH_DOCS_CMD` (C and D) and `BENCH_SKILL_FILE` (D);
-- the toolkit is staged under `$out/.stage/`, so no path in its environment
-  reaches the repository or `benchmarks/tasks/*/hidden/`;
+- C receives the lookup command under `$out/.stage/`; D also receives the skill;
+- the harness removes inherited lookup and skill variables before each launch;
+- the harness supplies no fixture-test path. Local file separation is not a security boundary;
 - it edits files in the work directory and exits;
 - it is killed after `BENCH_AGENT_TIMEOUT` seconds (default 600) and the
   attempt is recorded as failed.
 
-`BENCH_METRICS` is optional and should contain
-`{"files_read": Int, "tokens": Int|null, "model": String}`. Tokens are reported
-only when the agent's provider exposes them; the fixture agent writes `null`
-because no model was involved. Metrics the provider does not expose stay null —
-the harness does not invent numbers.
+`BENCH_METRICS` accepts one JSON object, for example:
+
+```json
+{"files_read": 2, "tokens": 123, "model": "adapter-name"}
+```
+
+`files_read` and `tokens` accept non-negative integers up to `9007199254740991`.
+Strings, booleans, arrays, objects, negative values, fractions, and larger values become `null`.
+Missing fields, absent files, empty files, and invalid JSON also produce `null`.
+The harness clears the metrics file before each attempt. A result row uses the last attempt's metrics.
+The `model` field in this file is informational; `BENCH_MODEL` supplies the result metadata.
+The fixture agent reports `tokens: null`. The summary does not estimate token counts.
 
 ## Metrics
 
@@ -101,22 +120,42 @@ the harness does not invent numbers.
 - `first_attempt_pass`, `final_pass`
 - `attempts`, `compiler_iterations` (builds run), `test_iterations`
 - `wall_clock_seconds`
-- `files_read` (agent-reported), `files_modified`, `unrelated_changes`
+- `files_read` and `tokens` (agent-reported), `files_modified`, `unrelated_changes`
 - `duplicated_implementations` (forbidden symbols found in `src/`)
 - `behavioural_regression` (visible tests failing after the change)
 
+Each result row has this shape:
+
+```json
+{
+  "task": "word-frequency",
+  "condition": "C",
+  "first_attempt_pass": true,
+  "final_pass": true,
+  "attempts": 1,
+  "compiler_iterations": 1,
+  "test_iterations": 1,
+  "wall_clock_seconds": 2,
+  "files_read": 2,
+  "tokens": null,
+  "files_modified": 1,
+  "unrelated_changes": 0,
+  "duplicated_implementations": 0,
+  "behavioural_regression": false
+}
+```
+
+The top-level object contains `metadata` and `results`.
+`metadata` contains `model`, `compiler`, `stdlib`, `wall_clock_seconds`, and `note`.
+The values above illustrate the schema; they are not measured model results.
+
 ## Test-discovery guard
 
-A green run is only accepted when the tests actually executed. For every
-attempt the harness:
-
-1. copies the hidden test into `test/`;
-2. refuses the run with `DISCOVERY FAILURE ...` when the file is not there,
-   when `test/<project>_test.gleam` no longer calls `gleeunit.main()`, when
-   gleeunit reports `No tests found!`, or when the hidden run executes fewer
-   than `hidden_tests` more tests than the visible run did — a delta, so adding
-   passing tests of your own does not satisfy the guard;
-3. removes the hidden file again so the next attempt cannot see it.
+A pass requires a successful agent exit and acceptance tests on every declared target.
+For each target, the evaluator checks the test file, the entry module, and the actual test count.
+The hidden run must execute at least `hidden_tests` more tests than the visible run.
+Skipped tests do not count as execution. One target cannot supply another target's count.
+The evaluator deletes its copy and logs before the next agent attempt.
 
 Prove the guard works:
 
@@ -130,7 +169,8 @@ breaks discovery in three ways (hidden test outside `test/`, an entry module
 that stops calling `gleeunit.main()`, and a hollow hidden test that adds one
 trivial pass instead of the expected tests), checks that a hanging agent is
 recorded as a timeout, and checks that an adapter which writes no metrics file
-still gets its row, with `files_read: null`. It fails unless every check holds.
+still gets its row, with `files_read: null`. It also runs `harness/regression-check.sh` for path safety, inherited variables, relative paths, token transport, retry separation, and per-target discovery.
+A timeout after a correct edit must still fail. The self-check fails if any assertion fails.
 
 ## Running
 
@@ -142,8 +182,12 @@ still gets its row, with `files_read: null`. It fails unless every check holds.
 ```
 
 Output goes to `/tmp/gleam-bench` by default (`--out` to change). An `--out`
-inside the repository is refused, because the staged toolkit and the prompt
-files are handed to the agent and must not lead back to the hidden tests.
+inside the repository is refused before directory creation.
+Conditions accept only `A`, `B`, `C`, and `D`. Task IDs accept letters, digits, underscores, and hyphens.
+The harness validates the full selection before it writes results.
+Existing symlinks inside the output directory cause refusal before cleanup.
+Relative agent and output paths resolve before the task starts. Executable paths can contain spaces.
+The interface accepts one executable path without arguments. Use an executable wrapper for agent arguments.
 
 `BENCH_AGENT_TIMEOUT` (default 600) bounds each agent attempt with `timeout` or
 `gtimeout`; when neither binary exists the harness prints a warning and runs
