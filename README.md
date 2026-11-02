@@ -29,6 +29,8 @@ repair. This repository packages that loop.
 - Erlang/OTP for the Erlang target (tested with OTP 29), Node/Deno/Bun only if
   you build for JavaScript.
 - `jq` for `scripts/gleam-api --json` and the benchmark harness.
+- `timeout` (GNU coreutils) or `gtimeout` to bound a benchmark agent; without
+  either the harness warns and agent attempts run unbounded.
 
 Dependencies are fetched by Gleam itself on first build; nothing here requires a
 service, a model provider, or an account.
@@ -144,7 +146,8 @@ attempt and removed again, and the harness refuses a run whose tests did not
 execute (`test/` placement, `gleeunit.main()` present, and the hidden run
 executing at least `hidden_tests` more tests than the visible run). Each
 condition gets only its own environment, and the skill and lookup tool are
-staged outside the repository so no path reaches the hidden tests. See
+staged outside the repository so no path reaches the hidden tests, and an
+`--out` directory inside the repository is refused. See
 `benchmarks/README.md`.
 
 The bundled agent is a fixture that replays recorded attempts. It exists so the

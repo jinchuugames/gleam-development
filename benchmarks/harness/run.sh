@@ -42,6 +42,15 @@ while [ $# -gt 0 ]; do
   esac
 done
 
+timeout_bin() {
+  if [ -n "${BENCH_TIMEOUT_BIN+set}" ]; then printf '%s' "$BENCH_TIMEOUT_BIN"; return; fi
+  command -v timeout 2>/dev/null || command -v gtimeout 2>/dev/null || true
+}
+TIMEOUT_BIN=$(timeout_bin)
+if [ -z "$TIMEOUT_BIN" ]; then
+  echo "run.sh: no timeout or gtimeout on PATH; agent attempts are unbounded (install coreutils, or set BENCH_TIMEOUT_BIN)" >&2
+fi
+
 command -v gleam >/dev/null || { echo "run.sh: gleam not on PATH" >&2; exit 2; }
 command -v jq >/dev/null || { echo "run.sh: jq not on PATH" >&2; exit 2; }
 [ -x "$agent" ] || { echo "run.sh: agent not executable: $agent" >&2; exit 2; }
@@ -51,6 +60,13 @@ stdlib_version=$(sed -n 's/^ *{ name = "gleam_stdlib", version = "\([^"]*\)".*/\
   "$tasks_dir"/*/work/manifest.toml 2>/dev/null | sort -u | paste -sd, -)
 
 mkdir -p "$out"
+out_real=$(cd "$out" && pwd -P)
+root_real=$(cd "$root" && pwd -P)
+case "$out_real/" in
+  "$root_real"/*)
+    echo "run.sh: --out must be outside the repository ($root_real); choose a directory under /tmp" >&2
+    exit 2 ;;
+esac
 start_time=$(date +%s)
 results_file="$out/results.jsonl"
 : > "$results_file"
@@ -204,8 +220,8 @@ run_case() { # $1 task, $2 condition
       envs+=(BENCH_SKILL_FILE="$stage/skill/SKILL.md")
     fi
     local agent_status
-    if command -v timeout >/dev/null 2>&1; then
-      ( cd "$work" && env "${envs[@]}" timeout "${BENCH_AGENT_TIMEOUT:-600}" "$agent" ) >> "$log" 2>&1 </dev/null
+    if [ -n "$TIMEOUT_BIN" ]; then
+      ( cd "$work" && env "${envs[@]}" "$TIMEOUT_BIN" "${BENCH_AGENT_TIMEOUT:-600}" "$agent" ) >> "$log" 2>&1 </dev/null
     else
       ( cd "$work" && env "${envs[@]}" "$agent" ) >> "$log" 2>&1 </dev/null
     fi
@@ -374,12 +390,27 @@ PROBE
   slow=$(mktemp)
   printf '#!/usr/bin/env bash\nsleep 5\n' > "$slow"
   chmod +x "$slow"
-  BENCH_AGENT_TIMEOUT=1 "$0" --tasks word-frequency --conditions B --agent "$slow" \
-    --max-attempts 1 --out "$out/selfcheck-timeout" >/dev/null 2>&1 || true
-  if grep -q "timed out" "$out/selfcheck-timeout/B/word-frequency/last.log"; then
-    echo "  agent timeout is recorded"
+  if [ -n "$TIMEOUT_BIN" ]; then
+    BENCH_AGENT_TIMEOUT=1 "$0" --tasks word-frequency --conditions B --agent "$slow" \
+      --max-attempts 1 --out "$out/selfcheck-timeout" >/dev/null 2>&1 || true
+    if grep -q "timed out" "$out/selfcheck-timeout/B/word-frequency/last.log"; then
+      echo "  agent timeout is recorded via $TIMEOUT_BIN"
+    else
+      echo "  AGENT TIMEOUT NOT RECORDED" >&2
+      status=1
+    fi
   else
-    echo "  AGENT TIMEOUT NOT RECORDED" >&2
+    echo "  agent timeout probe skipped: no timeout or gtimeout on PATH"
+  fi
+
+  # With the timeout explicitly disabled the run must still complete and say so.
+  BENCH_TIMEOUT_BIN= BENCH_AGENT_TIMEOUT=1 "$0" --tasks word-frequency --conditions A \
+    --agent "$slow" --max-attempts 1 --out "$out/selfcheck-no-timeout" \
+    > "$out/selfcheck-no-timeout.log" 2>&1 || true
+  if grep -q "attempts are unbounded" "$out/selfcheck-no-timeout.log"; then
+    echo "  missing timeout binary is reported, not silent"
+  else
+    echo "  MISSING TIMEOUT NOT REPORTED" >&2
     status=1
   fi
   rm -f "$probe" "$slow"

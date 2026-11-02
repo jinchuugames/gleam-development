@@ -105,6 +105,33 @@ if "$api" sig gleam/list.upsert --dir "$sample" >/dev/null 2>&1; then
 fi
 echo "  wrong-module lookup exits non-zero"
 
+step "recorded attempt variants compile"
+mkdir -p "$scratch/variants"
+for taskdir in "$root"/benchmarks/tasks/*/; do
+  task=$(basename "$taskdir")
+  for variant in feedback repair; do
+    [ -d "$taskdir/agent/$variant" ] || { echo "FIXTURE FAILURE: $task has no agent/$variant" >&2; exit 1; }
+    work="$scratch/variants/$task-$variant"
+    rm -rf "$work"
+    cp -R "$taskdir/work" "$work"
+    cp -R "$taskdir/agent/$variant"/. "$work"/
+    ( cd "$work" && gleam build >/dev/null ) || {
+      echo "FIXTURE FAILURE: $task/agent/$variant does not compile" >&2
+      exit 1
+    }
+    echo "  $task/$variant builds"
+  done
+done
+
+step "benchmark refusals"
+if "$root/benchmarks/harness/run.sh" --tasks word-frequency --conditions A \
+    --out "$root/benchmark-out" >/dev/null 2>&1; then
+  echo "GUARD FAILURE: an in-repository --out was accepted" >&2
+  exit 1
+fi
+[ -d "$root/benchmark-out" ] && rm -rf "$root/benchmark-out"
+echo "  in-repository --out is refused"
+
 step "benchmark self-check"
 "$root/benchmarks/harness/run.sh" --self-check --out "$scratch/bench-selfcheck"
 

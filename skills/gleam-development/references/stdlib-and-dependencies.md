@@ -42,7 +42,7 @@ If a symbol appears in none of these, it does not exist in this project.
 
 ## `gleam_stdlib` 1.0.5 module map
 
-Verified for the pinned version: `gleam`, `gleam/bit_array`, `gleam/bool`,
+Verified for the pinned version: `gleam/bit_array`, `gleam/bool`,
 `gleam/bytes_tree`, `gleam/dict`, `gleam/dynamic`, `gleam/dynamic/decode`,
 `gleam/float`, `gleam/function`, `gleam/int`, `gleam/io`, `gleam/list`,
 `gleam/option`, `gleam/order`, `gleam/pair`, `gleam/result`, `gleam/set`,

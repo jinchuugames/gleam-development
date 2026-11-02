@@ -8,7 +8,7 @@ pub fn page(items: List(a), page_number: Int, page_size: Int) -> List(a) {
     True -> []
     False ->
       items
-      |> list.drop((page_number - 1) * page_size)
+      |> list.drop({ page_number - 1 } * page_size)
       |> list.take(page_size)
   }
 }

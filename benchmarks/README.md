@@ -137,7 +137,14 @@ recorded as a timeout. It fails unless every check holds.
 ./benchmarks/harness/run.sh --agent ./my-agent.sh --json results.json
 ```
 
-Output goes to `/tmp/gleam-bench` by default (`--out` to change).
+Output goes to `/tmp/gleam-bench` by default (`--out` to change). An `--out`
+inside the repository is refused, because the staged toolkit and the prompt
+files are handed to the agent and must not lead back to the hidden tests.
+
+`BENCH_AGENT_TIMEOUT` (default 600) bounds each agent attempt with `timeout` or
+`gtimeout`; when neither binary exists the harness prints a warning and runs
+unbounded. `BENCH_TIMEOUT_BIN` overrides the binary, and setting it empty
+disables the bound.
 
 A real agent adapter is a thin wrapper that passes the prompt to the model,
 applies its edits to the current directory, and writes `$BENCH_METRICS`. Keep it
