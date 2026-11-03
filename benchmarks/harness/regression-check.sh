@@ -99,8 +99,8 @@ if [ "$BENCH_ATTEMPT" = 1 ]; then
   cp "$FIXTURE_ROOT/word-frequency/agent/feedback/src/word_frequency.gleam" src/word_frequency.gleam
   printf '{"tokens":17}' > "$BENCH_METRICS"
 else
-  [ -z "$(find . -iname '*zz_hidden_test*' -print)" ]
-  [ ! -e ../hidden.log ]
+  [ -z "$(find . -iname '*zz_fixture_test*' -print)" ]
+  [ ! -e ../fixture.log ]
   ! grep -q 'ties_sort_alphabetically_test' "$BENCH_FEEDBACK_FILE"
   printf 'yes\n' > "$BENCH_METRICS.isolated"
 fi

@@ -164,7 +164,7 @@ mistake is a type error, and no amount of `gleam build` catches them.
 
 **Opinion:** this is why the skill schedules a test run with a discovery check
 (`references/testing.md`) instead of stopping at a green build, and why the
-benchmark grades hidden tests rather than compilation.
+benchmark grades fixture tests rather than compilation.
 
 ## Debugging
 
