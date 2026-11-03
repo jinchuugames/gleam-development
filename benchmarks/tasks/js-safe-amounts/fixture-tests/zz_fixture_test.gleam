@@ -1,7 +1,7 @@
 import amount
 import gleeunit/should
 
-// Hidden acceptance tests. The harness injects this file into test/ and then
+// Fixture acceptance tests. The harness injects this file into test/ and then
 // verifies that all of these functions actually ran.
 
 pub fn amounts_a_javascript_number_cannot_hold_are_rejected_test() {

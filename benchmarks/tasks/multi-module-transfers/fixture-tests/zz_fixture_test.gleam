@@ -3,7 +3,7 @@ import batch
 import stock
 import transfer
 
-// Hidden acceptance tests. The harness injects this file into test/ and then
+// Fixture acceptance tests. The harness injects this file into test/ and then
 // verifies that all of these functions actually ran.
 
 pub fn quantities_above_the_shared_limit_are_clamped_test() {

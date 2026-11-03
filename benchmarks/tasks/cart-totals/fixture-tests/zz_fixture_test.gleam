@@ -1,7 +1,7 @@
 import cart
 import gleeunit/should
 
-// Hidden acceptance tests. The harness injects this file into test/ and then
+// Fixture acceptance tests. The harness injects this file into test/ and then
 // verifies that all of these functions actually ran.
 
 pub fn negative_quantity_reports_the_first_bad_index_test() {

@@ -38,7 +38,7 @@ for dir in "$root"/examples/*/; do
   fi
 done
 
-step "fixture acceptance: correct attempt passes hidden tests"
+step "fixture acceptance: the recorded correct attempt passes"
 for taskdir in "$root"/benchmarks/tasks/*/; do
   task=$(basename "$taskdir")
   docs_variant="$taskdir/agent/docs"
@@ -46,8 +46,8 @@ for taskdir in "$root"/benchmarks/tasks/*/; do
   work="$scratch/$task"
   cp -R "$taskdir/work" "$work"
   cp -R "$docs_variant"/. "$work"/
-  cp "$taskdir/hidden/$(jq -r '.hidden_module' "$taskdir/meta.json").gleam" "$work/test/"
-  expected=$(( $(jq -r '.visible_tests' "$taskdir/meta.json") + $(jq -r '.hidden_tests' "$taskdir/meta.json") ))
+  cp "$taskdir/fixture-tests/$(jq -r '.fixture_module' "$taskdir/meta.json").gleam" "$work/test/"
+  expected=$(( $(jq -r '.visible_tests' "$taskdir/meta.json") + $(jq -r '.fixture_tests' "$taskdir/meta.json") ))
   for target in $(jq -r '.targets[]' "$taskdir/meta.json"); do
     out=$( cd "$work" && gleam test --target "$target" 2>&1 )
     passed=$(printf '%s\n' "$out" | grep -Eo '[0-9]+ passed' | tail -1 | grep -Eo '[0-9]+')

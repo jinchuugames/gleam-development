@@ -5,8 +5,8 @@
     "erlang"
   ],
   "entry_module": "word_frequency_test",
-  "hidden_module": "zz_hidden_test",
-  "hidden_tests": 4,
+  "fixture_module": "zz_fixture_test",
+  "fixture_tests": 4,
   "visible_tests": 4,
   "touch": [
     "src/word_frequency.gleam"

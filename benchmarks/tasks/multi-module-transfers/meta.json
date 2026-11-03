@@ -5,8 +5,8 @@
     "erlang"
   ],
   "entry_module": "multi_module_transfers_test",
-  "hidden_module": "zz_hidden_test",
-  "hidden_tests": 3,
+  "fixture_module": "zz_fixture_test",
+  "fixture_tests": 3,
   "visible_tests": 1,
   "touch": [
     "src/transfer.gleam",

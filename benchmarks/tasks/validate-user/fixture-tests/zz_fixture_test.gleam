@@ -1,7 +1,7 @@
 import gleeunit/should
 import registration
 
-// Hidden acceptance tests. The harness injects this file into test/ and then
+// Fixture acceptance tests. The harness injects this file into test/ and then
 // verifies that all of these functions actually ran.
 
 pub fn whitespace_only_name_is_blank_test() {

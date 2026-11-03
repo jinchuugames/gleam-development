@@ -11,7 +11,7 @@ here is for working on the toolkit.
   them. If a claim stops being true, update it with new evidence; do not append
   guesses.
 - `benchmarks/` is model-agnostic: the harness never imports a provider SDK.
-  Fixture tasks must compile, their hidden tests must pass against a correct
+  Fixture tasks must compile, their fixture tests must pass against a correct
   solution, and the discovery guard must refuse a run whose tests did not
   execute.
 - Run `scripts/check.sh` before claiming anything works. It formats, builds,
