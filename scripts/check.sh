@@ -12,11 +12,12 @@ step() { printf '\n== %s\n' "$1"; }
 
 step "shell syntax"
 bash -n "$api"
+bash -n "$skill/scripts/gleam-doc-check"
 bash -n "$root/benchmarks/harness/run.sh"
 bash -n "$root/benchmarks/harness/mock-agent.sh"
 bash -n "$root/benchmarks/harness/regression-check.sh"
 if command -v shellcheck >/dev/null; then
-  shellcheck "$root/scripts/check.sh" "$api" "$root"/benchmarks/harness/*.sh
+  shellcheck "$root/scripts/check.sh" "$api" "$skill/scripts/gleam-doc-check" "$root"/benchmarks/harness/*.sh
 fi
 
 step "formatting"
@@ -176,6 +177,82 @@ printf '%s\n' "$clean" | grep -q '~' && {
   exit 1
 }
 echo "  --json returns similarity and both symbols"
+
+step "documentation check"
+# One module that follows references/documentation.md and one that breaks each
+# rule the script checks. The probe does not need to compile.
+doc_check="$skill/scripts/gleam-doc-check"
+docs="$scratch/docs"
+mkdir -p "$docs/good/src" "$docs/bad/src"
+cat >"$docs/good/src/repair.gleam" <<'EOF'
+//// Calculates the repair debt of a mech.
+////
+//// ## Terms
+////
+//// | Term | Meaning |
+//// | --- | --- |
+//// | Damage debt | The HP that a mech needs. |
+////
+//// ## Rules
+////
+//// 1. The debt is never less than zero.
+
+/// Why a repair failed.
+pub type RepairError {
+  /// The mech has no damage debt.
+  NothingToRepair
+}
+
+/// Returns the HP that a mech needs now.
+///
+/// ### Errors
+///
+/// - `NothingToRepair` if the debt is zero.
+pub fn missing(debt: Int) -> Result(Int, RepairError) {
+  case debt > 0 {
+    True -> Ok(debt)
+    False -> Error(NothingToRepair)
+  }
+}
+EOF
+cat >"$docs/good/src/sql.gleam" <<'EOF'
+//// This module was generated automatically. It has no docs.
+pub fn query() -> Int {
+  1
+}
+EOF
+cat >"$docs/bad/src/repair.gleam" <<'EOF'
+/// The debt at now.
+///
+/// ## Details
+///
+/// This function carries the debt, and the sentence goes on for far too many words so that a reader loses the subject and the verb long before the end.
+///
+/// ### Background
+pub fn missing(debt: Int) -> Int {
+  debt
+}
+
+pub const limit = 10
+EOF
+assert_contains "$("$doc_check" "$docs/good/src")" "no findings" "a module that follows the standard passes"
+bad=$("$doc_check" "$docs/bad/src" 2>&1) && {
+  echo "DOC CHECK FAILURE: the bad module passed" >&2
+  exit 1
+}
+for rule in missing-module-doc missing-doc summary-verb heading-level \
+  function-sections banned-word sentence-length; do
+  assert_contains "$bad" "$rule" "the bad module reports $rule"
+done
+"$doc_check" --write-baseline "$docs/baseline.txt" "$docs/bad/src" >/dev/null
+assert_contains "$("$doc_check" --baseline "$docs/baseline.txt" "$docs/bad/src")" \
+  "no findings" "a baseline accepts the findings it lists"
+printf '\npub fn extra() -> Int {\n  1\n}\n' >>"$docs/bad/src/repair.gleam"
+new=$("$doc_check" --baseline "$docs/baseline.txt" "$docs/bad/src" 2>&1) && {
+  echo "DOC CHECK FAILURE: a new finding passed the baseline" >&2
+  exit 1
+}
+assert_contains "$new" "missing-doc: extra" "a baseline still reports a new finding"
 
 step "recorded attempt variants compile"
 mkdir -p "$scratch/variants"

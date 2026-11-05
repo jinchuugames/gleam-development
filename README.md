@@ -13,9 +13,10 @@ repair. This repository packages that loop.
 
 | Path | What it is |
 | --- | --- |
-| `skills/gleam-development/` | The skill, its bundled lookup script, and eight references for specific topics |
+| `skills/gleam-development/` | The skill, its bundled lookup script, and nine references for specific topics |
 | `templates/AGENTS.md` | Copyable `AGENTS.md` for a Gleam repository, with placeholders to fill |
 | `skills/gleam-development/scripts/gleam-api` | API lookup over installed package sources; reports package and pinned version |
+| `skills/gleam-development/scripts/gleam-doc-check` | checks doc comments against `references/documentation.md`, with a baseline for existing code |
 | `scripts/check.sh` | Verifies formatting, examples, fixtures, lookup, and the benchmark guard |
 | `examples/order-pipeline` | Pure domain: custom types, state transitions, `Result` validation, pricing |
 | `examples/inventory` | Architecture: pure core, store boundary, why an actor is not justified |
