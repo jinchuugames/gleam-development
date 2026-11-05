@@ -13,7 +13,7 @@ repair. This repository packages that loop.
 
 | Path | What it is |
 | --- | --- |
-| `skills/gleam-development/` | The skill, its bundled lookup script, and eight references for specific topics |
+| `skills/gleam-development/` | The skill, its bundled lookup script, and nine references for specific topics |
 | `templates/AGENTS.md` | Copyable `AGENTS.md` for a Gleam repository, with placeholders to fill |
 | `skills/gleam-development/scripts/gleam-api` | API lookup over installed package sources; reports package and pinned version |
 | `skills/gleam-development/scripts/gleam-doc-check` | checks doc comments against `references/documentation.md`, with a baseline for existing code |
