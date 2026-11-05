@@ -168,7 +168,7 @@ panicking test is a failure. Verified behaviour:
   detect.
 
 Therefore the benchmark guard checks three things and refuses the run when any
-fails: the hidden test file is present under `test/`, the entry module still
+fails: the fixture test file is present under `test/`, the entry module still
 calls `gleeunit.main`, and the reported number of executed tests is at least
 the number the harness injected. A deliberate canary run proves the guard
 fires.

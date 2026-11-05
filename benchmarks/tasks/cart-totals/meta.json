@@ -5,8 +5,8 @@
     "erlang"
   ],
   "entry_module": "cart_totals_test",
-  "hidden_module": "zz_hidden_test",
-  "hidden_tests": 4,
+  "fixture_module": "zz_fixture_test",
+  "fixture_tests": 4,
   "visible_tests": 2,
   "touch": [
     "src/cart.gleam"

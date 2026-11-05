@@ -2,7 +2,7 @@ import gleam/dict
 import gleeunit/should
 import word_frequency
 
-// Hidden acceptance tests. The harness injects this file into test/ and then
+// Fixture acceptance tests. The harness injects this file into test/ and then
 // verifies that all of these functions actually ran.
 
 pub fn case_and_extra_spaces_are_normalised_test() {

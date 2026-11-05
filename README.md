@@ -1,9 +1,8 @@
 # gleam-development
 
-An agent toolkit for Gleam: a skill that makes coding agents look up real APIs
-before writing them, an `AGENTS.md` template for Gleam projects, a command-line
-documentation lookup that reads the versions you actually have installed,
-architectural examples, a Go-to-Gleam comparison, and a benchmark harness with hidden tests.
+This agent toolkit includes a Gleam development skill, an `AGENTS.md` template, and a command-line API lookup.
+The lookup reads the installed package versions.
+The toolkit also includes architectural examples, a Go-to-Gleam comparison, and a benchmark harness with fixture tests.
 
 It exists because agents invent standard-library functions in Gleam — `dict.update`
 does not exist in `gleam_stdlib` 1.0.5, `dict.upsert` does. Those mistakes are
@@ -22,7 +21,7 @@ repair. This repository packages that loop.
 | `examples/inventory` | Architecture: pure core, store boundary, why an actor is not justified |
 | `docs/go-to-gleam.md` | Paired source excerpts: dependencies, Wisp handlers, transactions, context, periodic work, and shutdown |
 | `examples/reservation` | Executable Go and Gleam servers with PostgreSQL, one browser page, and an isolated database check |
-| `benchmarks/` | Model-agnostic harness, nine tasks, hidden tests, discovery guard |
+| `benchmarks/` | Model-agnostic harness, nine tasks, fixture tests, discovery guard |
 | `docs/research.md` | What the ecosystem actually provides, verified on 2026-11-02 |
 | `docs/tradeoffs.md` | Where Gleam is weaker: deployment, the BEAM, ecosystem, the JavaScript target, debugging |
 
@@ -180,7 +179,7 @@ OTP 29, Node 23.11.1, `gleam_stdlib` 1.0.5, `gleeunit` 1.11.0.
   clean.
 - `benchmarks/harness/run.sh --self-check` proves the baseline environment
   receives no toolkit path, that staged paths never reach the repository, that
-  the discovery guard refuses a missing, an unexecuted, and a hollow hidden
+  the discovery guard refuses a missing, an unexecuted, and a hollow fixture
   test, that a hanging agent is recorded as a timeout, and that an adapter
   with no metrics file still gets a row with `files_read: null` and `tokens: null`.
   Regression checks cover unsafe paths, token transport, retry separation, and discovery on each target.
@@ -188,7 +187,7 @@ OTP 29, Node 23.11.1, `gleam_stdlib` 1.0.5, `gleeunit` 1.11.0.
   attempt and 9/9 after three attempts (repair, then the remaining fix), C 9/9,
   D 9/9. Table and failure modes are in `benchmarks/README.md`.
 - `scripts/check.sh` passes end to end: formatting, 57 example tests, every
-  task's correct attempt running its hidden tests on both targets where the
+  task's correct attempt running its fixture tests on both targets where the
   task claims two, the full lookup surface, reuse detection, the discovery
   guard, the harness self-check, and the fixture benchmark.
 
@@ -221,8 +220,8 @@ OTP 29, Node 23.11.1, `gleam_stdlib` 1.0.5, `gleeunit` 1.11.0.
 
 - Keep `SKILL.md` short; put detail in `references/` so it loads only when the
   topic comes up.
-- A benchmark task needs a `work/` project, hidden tests with
-  `visible_tests`/`hidden_tests` counts in `meta.json`, and recorded attempts
+- A benchmark task needs a `work/` project, fixture tests with
+  `visible_tests`/`fixture_tests` counts in `meta.json`, and recorded attempts
   for `baseline`, `docs`, `feedback`, and `repair`.
 - Run `scripts/check.sh` before claiming anything works. It formats, builds,
   tests, checks lookup, and runs the benchmark guard.

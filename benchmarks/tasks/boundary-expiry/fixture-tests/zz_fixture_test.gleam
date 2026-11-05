@@ -1,7 +1,7 @@
 import gleeunit/should
 import session
 
-// Hidden acceptance tests. The harness injects this file into test/ and then
+// Fixture acceptance tests. The harness injects this file into test/ and then
 // verifies that all of these functions actually ran.
 
 pub fn a_session_is_valid_one_second_before_it_expires_test() {

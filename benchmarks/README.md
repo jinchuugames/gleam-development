@@ -5,7 +5,7 @@ with and without the toolkit. It never imports a provider SDK and needs no paid
 API access for its own validation: a fixture agent replays recorded attempts so
 the infrastructure can be exercised offline.
 
-**What it measures:** whether hidden tests pass. **What it does not measure:**
+**What it measures:** whether fixture tests pass. **What it does not measure:**
 model quality when run with the fixture agent. Fixture results validate the
 harness; only a real agent run is evidence about an agent.
 
@@ -38,28 +38,30 @@ It removes the copy and its logs before the next attempt.
 | `multi-module-transfers` | a change across two modules that must reuse a rule owned by a third |
 | `js-safe-amounts` | Erlang/JavaScript behavioural compatibility: `2^53` precision and integer formatting |
 
-Each task has a `work/` project, a `prompt.md`, public fixture tests in `hidden/`, and recorded attempts in `agent/`.
+Each task has a `work/` project, a `prompt.md`, public fixture tests in `fixture-tests/`, and recorded attempts in `agent/`.
 The evaluator never adds fixture tests to the agent's work directory.
 
-## Public fixtures and private holdouts
+## Public fixtures, not private holdouts
 
-The bundled fixture tests are public. They validate the harness; they are not private holdouts for a model study.
-An agent with internet access can obtain these tests from the public repository.
+The bundled tests are fixture tests, and every one of them is public.
+An agent with internet access can obtain them from this repository, so the harness keeps fixture tests out of the agent's work directory but does not hide them.
 A separate work directory provides local file separation. It does not provide a filesystem sandbox or network isolation.
 An agent with unrestricted host access can also search other host directories.
 
-A real agent comparison needs private holdout tests in an evaluator that the agent cannot access.
+A real model comparison needs a separate private holdout set, kept in an evaluator the agent cannot reach.
 Use an external sandbox or a separate host for that boundary.
-This harness has no external-holdout interface. Its bundled fixture scores cannot establish model quality.
+This harness has no external-holdout interface.
+A score on the public fixtures is never evidence of model capability on its own: it can measure test exposure instead of task skill.
+Report a real-agent result only next to a private-holdout result, and label the fixture score as harness validation.
 
 ## Layout of a task
 
 ```
 tasks/<id>/
-  meta.json        targets, hidden module name, test counts, expected files, forbidden duplicates
+  meta.json        targets, fixture module name, test counts, expected files, forbidden duplicates
   prompt.md        what the agent is told
   work/            the project handed to the agent (gleam.toml, manifest.toml, src/, test/)
-  hidden/zz_hidden_test.gleam
+  fixture-tests/zz_fixture_test.gleam
   agent/baseline/  recorded first attempt, blind (used by B; A stops here)
   agent/docs/      recorded first attempt with API lookup (used by C and D)
   agent/feedback/  recorded partial repair after compiler/test output; still defective
@@ -153,7 +155,7 @@ The values above illustrate the schema; they are not measured model results.
 
 A pass requires a successful agent exit and acceptance tests on every declared target.
 For each target, the evaluator checks the test file, the entry module, and the actual test count.
-The hidden run must execute at least `hidden_tests` more tests than the visible run.
+The fixture run must execute at least `fixture_tests` more tests than the visible run.
 Skipped tests do not count as execution. One target cannot supply another target's count.
 The evaluator deletes its copy and logs before the next agent attempt.
 
@@ -165,8 +167,8 @@ Prove the guard works:
 
 It probes each condition's environment (A must receive no toolkit path, C the
 lookup command only, D both, and no path may contain the repository root),
-breaks discovery in three ways (hidden test outside `test/`, an entry module
-that stops calling `gleeunit.main()`, and a hollow hidden test that adds one
+breaks discovery in three ways (fixture test outside `test/`, an entry module
+that stops calling `gleeunit.main()`, and a hollow fixture test that adds one
 trivial pass instead of the expected tests), checks that a hanging agent is
 recorded as a timeout, and checks that an adapter which writes no metrics file
 still gets its row, with `files_read: null`. It also runs `harness/regression-check.sh` for path safety, inherited variables, relative paths, token transport, retry separation, and per-target discovery.
@@ -249,6 +251,6 @@ that end on the repaired file report `dups=0`.
   the fixture table shows the harness distinguishing A/B/C/D, not a measured
   improvement from the toolkit. In the bundled fixtures, D replays the same
   recorded attempt as C, so C and D scores are identical by construction.
-- `hidden_tests` and `visible_tests` in `meta.json` are the guard's
+- `fixture_tests` and `visible_tests` in `meta.json` are the guard's
   expectations; keep them correct when editing a task, or the guard will refuse
   honest runs.

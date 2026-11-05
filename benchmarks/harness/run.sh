@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
-# Benchmark harness: evaluate an agent on hidden-test Gleam tasks under four
+# Benchmark harness: evaluate an agent on fixture-test Gleam tasks under four
 # conditions (A baseline, B compiler feedback, C +docs lookup, D +skill).
 #
-# The harness owns the task fixture, the compiler, and the hidden tests. The
+# The harness owns the task fixture, the compiler, and the fixture tests. The
 # agent receives its work directory and permitted toolkit paths, not a sandbox.
 #
 #   ./run.sh                                   # all tasks, all conditions, mock agent
@@ -112,10 +112,15 @@ check_output() {
     [ -z "$(find "$out" -type l -print -quit)" ] || fail "output directory contains a symlink: $out"
   fi
 }
+# Resolve the target's parent before deleting, so no spelling of the path -- a
+# `..` segment or a symlinked parent -- can point the removal outside --out.
 remove_output() {
-  case "$1" in "$out"/*) ;; *) fail "unsafe deletion target: $1" ;; esac
+  local parent target
+  parent=$(absolute_dir "$(dirname "$1")") || fail "cannot resolve deletion target: $1"
+  target="${parent%/}/$(basename "$1")"
+  case "$target" in "$out"/?*) ;; *) fail "unsafe deletion target: $1" ;; esac
   check_output
-  rm -rf -- "$1" || fail "cannot remove $1"
+  rm -rf -- "$target" || fail "cannot remove $1"
 }
 check_output
 mkdir -p "$out" || fail "cannot create --out: $out"
@@ -161,17 +166,17 @@ executed_tests() {
   ' "$1"
 }
 
-# Refuse a run whose hidden tests did not actually execute.
+# Refuse a run whose fixture tests did not actually execute.
 verify_discovery() { # $1 work, $2 meta, $3 test log, $4 label, $5 visible-run count
   local work="$1" meta="$2" log="$3" label="$4" visible="$5"
-  local hidden_module entry expected passed delta
-  hidden_module=$(jq -r '.hidden_module' "$meta")
+  local fixture_module entry expected passed delta
+  fixture_module=$(jq -r '.fixture_module' "$meta")
   entry=$(jq -r '.entry_module // empty' "$meta")
   if [ -z "$entry" ]; then
     entry="$(sed -n 's/^name[[:space:]]*=[[:space:]]*"\([^"]*\)".*/\1/p' "$work/gleam.toml")_test"
   fi
-  if [ ! -f "$work/test/$hidden_module.gleam" ]; then
-    echo "DISCOVERY FAILURE ($label): hidden test not present in test/ as $hidden_module.gleam" >&2
+  if [ ! -f "$work/test/$fixture_module.gleam" ]; then
+    echo "DISCOVERY FAILURE ($label): fixture test not present in test/ as $fixture_module.gleam" >&2
     return 1
   fi
   if [ -f "$work/test/$entry.gleam" ] && ! grep -q 'gleeunit\.main()' "$work/test/$entry.gleam"; then
@@ -182,17 +187,17 @@ verify_discovery() { # $1 work, $2 meta, $3 test log, $4 label, $5 visible-run c
     echo "DISCOVERY FAILURE ($label): gleeunit reported no tests" >&2
     return 1
   fi
-  expected=$(jq -r '.hidden_tests // 0' "$meta")
+  expected=$(jq -r '.fixture_tests // 0' "$meta")
   passed=$(executed_tests "$log")
   if [ "$passed" -eq 0 ]; then
-    echo "DISCOVERY FAILURE ($label): no test summary after injecting hidden tests" >&2
+    echo "DISCOVERY FAILURE ($label): no test summary after injecting fixture tests" >&2
     return 1
   fi
-  # The hidden module's tests must show up as a delta over the visible run, so
+  # The fixture module's tests must show up as a delta over the visible run, so
   # an agent cannot satisfy the guard by adding passing tests of its own.
   delta=$((passed - visible))
   if [ "$delta" -lt "$expected" ]; then
-    echo "DISCOVERY FAILURE ($label): hidden run executed $delta more tests than the visible run, expected at least $expected" >&2
+    echo "DISCOVERY FAILURE ($label): fixture run executed $delta more tests than the visible run, expected at least $expected" >&2
     return 1
   fi
   return 0
@@ -229,13 +234,13 @@ run_case() { # $1 task, $2 condition
   local feedback_file="$case_dir/feedback.txt"
   local metrics_file="$case_dir/agent-metrics.json"
   local log="$case_dir/last.log"
-  local variant attempt started ended build_ok test_ok hidden_ok=false first_pass=false
+  local variant attempt started ended build_ok test_ok fixture_ok=false first_pass=false
   local builds=0 tests=0
   local envs=()
 
   remove_output "$case_dir"; mkdir -p "$case_dir" || fail "cannot create $case_dir"
   # Stage the toolkit outside the repository tree so no path handed to the
-  # agent leads back to benchmarks/tasks/*/hidden/.
+  # agent leads back to benchmarks/tasks/*/fixture-tests/.
   local stage="$out/.stage/$condition-$task"
   local docs_cmd=""
   remove_output "$stage"
@@ -310,36 +315,36 @@ run_case() { # $1 task, $2 condition
     fi
 
     # Evaluate a separate copy, then discard both compiled tests and their logs.
-    hidden_ok=false
+    fixture_ok=false
     if $build_ok; then
       local evaluation="$evaluator/attempt" target visible_executed entry
       mkdir -p "$evaluation"
       cp -R "$work/." "$evaluation/" || fail "cannot copy the attempt"
-      cp "$tdir/hidden/$(jq -r '.hidden_module' "$meta").gleam" "$evaluation/test/" || fail "cannot copy acceptance tests"
+      cp "$tdir/fixture-tests/$(jq -r '.fixture_module' "$meta").gleam" "$evaluation/test/" || fail "cannot copy acceptance tests"
       if [ "${BENCH_BREAK_DISCOVERY:-}" = "missing" ]; then
-        mkdir -p "$evaluation/hidden_disabled"
-        mv "$evaluation/test/$(jq -r '.hidden_module' "$meta").gleam" "$evaluation/hidden_disabled/"
+        mkdir -p "$evaluation/fixture_disabled"
+        mv "$evaluation/test/$(jq -r '.fixture_module' "$meta").gleam" "$evaluation/fixture_disabled/"
       fi
       if [ "${BENCH_BREAK_DISCOVERY:-}" = "hollow" ]; then
-        printf 'pub fn placeholder_test() {\n  Nil\n}\n' > "$evaluation/test/$(jq -r '.hidden_module' "$meta").gleam"
+        printf 'pub fn placeholder_test() {\n  Nil\n}\n' > "$evaluation/test/$(jq -r '.fixture_module' "$meta").gleam"
       fi
       if [ "${BENCH_BREAK_DISCOVERY:-}" = "no_entry" ]; then
         entry="$(jq -r '.entry_module' "$meta")"
         sed 's/gleeunit\.main()/Nil/' "$evaluation/test/$entry.gleam" > "$evaluation/entry.tmp"
         mv "$evaluation/entry.tmp" "$evaluation/test/$entry.gleam"
       fi
-      if run_tests "$evaluation" "$meta" "$evaluator/hidden.log"; then hidden_ok=true; fi
+      if run_tests "$evaluation" "$meta" "$evaluator/fixture.log"; then fixture_ok=true; fi
       for target in $(jq -r '.targets[]' "$meta"); do
         visible_executed=$(executed_tests "$case_dir/visible.log.$target")
-        verify_discovery "$evaluation" "$meta" "$evaluator/hidden.log.$target" "$task/$condition/$target" "$visible_executed" || hidden_ok=false
+        verify_discovery "$evaluation" "$meta" "$evaluator/fixture.log.$target" "$task/$condition/$target" "$visible_executed" || fixture_ok=false
       done
       rm -rf -- "$evaluation"
-      rm -f -- "$evaluator"/hidden.log*
+      rm -f -- "$evaluator"/fixture.log*
     fi
-    [ "$agent_status" -eq 0 ] || hidden_ok=false
-    if [ "$attempt" -eq 1 ]; then first_pass=$hidden_ok; fi
+    [ "$agent_status" -eq 0 ] || fixture_ok=false
+    if [ "$attempt" -eq 1 ]; then first_pass=$fixture_ok; fi
 
-    if $hidden_ok; then break; fi
+    if $fixture_ok; then break; fi
     {
       echo "Attempt $attempt did not pass the acceptance tests."
       echo "--- build ---"; tail -30 "$case_dir/build.log" 2>/dev/null
@@ -378,10 +383,10 @@ run_case() { # $1 task, $2 condition
   $test_ok && regression=false || regression=true
 
   local attempts_used="$attempt"
-  $hidden_ok || attempts_used="$attempts"
+  $fixture_ok || attempts_used="$attempts"
   jq -c -n \
     --arg task "$task" --arg condition "$condition" \
-    --argjson first "$first_pass" --argjson final "$hidden_ok" \
+    --argjson first "$first_pass" --argjson final "$fixture_ok" \
     --argjson attempts_used "$attempts_used" --argjson builds "$builds" --argjson tests "$tests" \
     --argjson wall "$((ended - started))" --argjson modified "$modified" \
     --argjson unrelated "$unrelated" --argjson duplicates "$duplicates" \
@@ -392,7 +397,7 @@ run_case() { # $1 task, $2 condition
       unrelated_changes:$unrelated, duplicated_implementations:$duplicates,
       behavioural_regression:$regression}' >> "$results_file"
 
-  if $hidden_ok; then
+  if $fixture_ok; then
     printf '%-18s %s  PASS  attempts=%s builds=%s files=%s unrelated=%s dups=%s\n' \
       "$task" "$condition" "$attempts_used" "$builds" "$modified" "$unrelated" "$duplicates"
   else

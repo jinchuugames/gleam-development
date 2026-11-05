@@ -6,8 +6,8 @@
     "javascript"
   ],
   "entry_module": "target_split_test",
-  "hidden_module": "zz_hidden_test",
-  "hidden_tests": 2,
+  "fixture_module": "zz_fixture_test",
+  "fixture_tests": 2,
   "visible_tests": 1,
   "touch": [
     "src/greeting.gleam"
