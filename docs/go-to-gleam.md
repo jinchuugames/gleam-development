@@ -1,38 +1,43 @@
 # Go to Gleam: a reservation service
 
-This guide compares design choices in one complete service. Read the Go first, then compare the Gleam beside it.
+This guide compares the design of the same service in Go and Gleam.
+
+1. Read the Go code example.
+2. Compare it with the Gleam code example.
+
 The examples use the same PostgreSQL schema, HTTP contract, and browser page.
 The Gleam application uses **Wisp** for HTTP handlers. Mist supplies the HTTP transport through Wisp's adapter.
 
 The source is in [`examples/reservation`](../examples/reservation/README.md).
-Every source block below comes from an executable file. The repository check rejects stale excerpts.
+Each code example comes from an executable file. The repository check rejects code examples that differ from their source files.
 
 ## The behavior
 
 A customer reserves stock for sixty seconds. The API stores the reservation and removes the reserved quantity from available stock.
 A periodic worker releases expired reservations. The browser shows the current status.
 
-The service must preserve these rules:
+The service must obey these rules:
 
 - Available stock never falls below zero.
 - A repeated request with the same key reserves stock once.
 - The same key with a different quantity or product returns a conflict.
 - Expiry returns stock once.
-- A server restart preserves reservations and permits overdue expiry.
+- Reservations remain in the database after a server restart.
+- The worker releases expired reservations after a server restart.
 
 | Request | Result |
 | --- | --- |
 | `GET /` | The browser page |
-| `POST /api/reservations` | Create a reservation, or return its current state for a repeated request |
-| `GET /api/reservations/:key` | Read the reservation for the authenticated owner |
+| `POST /api/reservations` | A new reservation, or the current state of a reservation for a repeated request |
+| `GET /api/reservations/:key` | The reservation for the authenticated owner |
 
-The example accepts one configured bearer token and assigns it the owner `demo`.
-This keeps identity explicit without an external account service. It is a local example, not a complete authentication system.
+The example checks one configured bearer token. That token identifies the owner `demo`.
+The handler receives the owner identifier from this authentication check. The example does not provide a complete authentication system.
 
 ## 1. Files are API boundaries
 
-The Go implementation has one package across four source files.
-Private functions remain accessible throughout that package.
+The Go application has one package with four source files.
+All files in that package can use its private functions.
 
 ```text
 go/
@@ -42,8 +47,8 @@ go/
   reservation_test.go
 ```
 
-The Gleam implementation has a module for each concern.
-Each module exposes the functions that other modules require.
+The Gleam application has a module for each responsibility.
+Each module declares the functions that other modules require as public.
 
 ```text
 gleam/
@@ -58,16 +63,18 @@ gleam/
   test/
 ```
 
-These directories contain one Go module and one Gleam package. They do not represent four separate services.
-The Gleam folder groups module names. It does not permit access to private functions in adjacent modules.
+These directories contain one Go module and one Gleam package. Each application runs as one service.
+The Gleam folder groups module names. A module cannot use private functions from another module in the folder.
 
 Keep the reservation types, validation, SQL, and private helpers together.
-A separate package for each operation would add dependency configuration without a useful boundary.
-Split a module when a distinct responsibility needs a clear API, rather than when a file reaches an arbitrary size.
+A separate package for each operation adds dependency configuration. This example does not need those package boundaries.
+Split a module when a separate responsibility needs its own API.
+Use the responsibility to select the boundary.
+Do not use file size alone to select the boundary.
 
 This follows Gleam's guidance on [fragmented modules](https://gleam.run/documentation/conventions-patterns-and-anti-patterns/#Fragmented-modules).
 
-## 2. A receiver usually becomes explicit dependencies
+## 2. Replace a receiver with explicit dependencies
 
 The Go service contains a database pool and a clock. Its methods can use both.
 
@@ -100,16 +107,16 @@ pub type Dependencies {
 The database field is a pool handle. The clock is a function.
 The record does not contain a copy of the database or a mutable service object.
 
-The important transfer is explicit construction of dependencies. A Go receiver and a Gleam argument can both provide this.
-There is no need to reproduce a method table or create an actor for the service.
+Both applications receive dependencies explicitly. The Go receiver contains the dependencies. The Gleam functions receive them as arguments.
+The Gleam application needs no method table or actor for these operations.
 
 The Go read helper has a small interface because both `pgxpool.Pool` and `pgx.Tx` implement its operation.
 Pog represents a pool and a transaction with the same `Connection` type, so the Gleam helper requires no equivalent interface.
-Use the actual library types before you introduce a general store abstraction.
+Use the library types before you introduce a general store interface.
 
 ## 3. Follow one HTTP request
 
-The Go handler establishes an operation deadline. It decodes the input, calls the service, and converts the result into HTTP.
+The Go handler sets an operation deadline. It decodes the input, calls the service, and converts the result into an HTTP response.
 
 <!-- source: examples/reservation/go/web.go#handler -->
 ```go
@@ -147,7 +154,7 @@ func (h Handler) route(w http.ResponseWriter, r *http.Request, owner string) {
 ```
 
 The Wisp handler performs the same work. `require_json` checks the content type and reads the body.
-The decoder checks its structure. The reservation module checks the business rules.
+The decoder checks the structure of the input. The reservation module checks the business rules.
 
 <!-- source: examples/reservation/gleam/src/reservation_example/web.gleam#handler -->
 ```gleam
@@ -174,15 +181,15 @@ fn route(
 }
 ```
 
-Both handlers receive `owner` from the authentication boundary. Neither accepts an owner identifier from the JSON body.
+Both handlers receive `owner` from the authentication check. Neither accepts an owner identifier from the JSON body.
 Both SQL reads include the owner identifier, so a request key alone does not select another owner's reservation.
 
-`use` here supplies a callback to Wisp. It does not establish a goroutine, a transaction, or a cancellation scope.
+`use` supplies a callback to Wisp. It does not create a goroutine, a transaction, or a cancellation scope.
 The handler remains ordinary application code.
 
-## 4. Keep the transaction; change the error flow
+## 4. Transactions and error values
 
-The Go implementation owns the transaction explicitly. A deferred rollback covers failures before a successful commit.
+The Go application starts the transaction explicitly. A deferred rollback cancels the transaction if a failure prevents a successful commit.
 
 <!-- source: examples/reservation/go/reservation.go#create -->
 ```go
@@ -206,7 +213,7 @@ func (s *Service) Create(ctx context.Context, owner string, input Input) (Reserv
 }
 ```
 
-Pog owns transaction cleanup around a callback. `Ok` permits a commit; `Error` causes a rollback.
+Pog controls the transaction through a callback. `Ok` permits a commit. `Error` causes a rollback.
 
 <!-- source: examples/reservation/gleam/src/reservation_example/reservation.gleam#create -->
 ```gleam
@@ -225,12 +232,12 @@ pub fn create(
 }
 ```
 
-The distinction between an expected refusal and a database failure remains useful.
+Both applications distinguish an expected refusal from a database failure.
 Gleam names those cases in a custom error type: `InsufficientStock`, `KeyConflict`, and `Database(error)`.
-The Wisp boundary converts those values into HTTP responses.
+The Wisp handler converts those values into HTTP responses.
 
 Recoverable failures return `Result`. A reservation function must not use `let assert` for stock availability or client input.
-The application does use assertions for required configuration at startup, where a refusal must stop the application.
+The application uses assertions for required configuration at startup. A configuration refusal stops the application.
 
 ## 5. Immutability does not protect shared database state
 
@@ -305,19 +312,19 @@ Two HTTP requests can run concurrently in either application.
 An immutable Gleam value does not serialize PostgreSQL updates.
 The database lock protects stock across connections and across server instances.
 
-A local actor would only serialize callers that use that actor.
-It would not replace this transaction when another application instance can write to the same database.
+A local actor serializes only the requests that it receives.
+Another application instance can write to the same database without that actor. The transaction remains necessary.
 
 The primary key is `(owner_id, request_key)`.
 Concurrent requests for the same key cannot create two reservations.
-A uniqueness failure also rolls back the earlier stock update.
+A uniqueness failure also causes a rollback of the stock update in that transaction.
 
-Request keys remain in the database after expiry. A retry returns the expired reservation instead of creating a fresh reservation.
+Request keys remain in the database after expiry. A retry returns the expired reservation. It does not create a new reservation.
 A new reservation requires a new key.
 
-## 6. Separate the meanings of context
+## 6. Context has separate responsibilities
 
-The following responsibilities often appear together in Go code. They require separate decisions in Gleam.
+These responsibilities often appear together in Go code. Each requires a separate decision in Gleam.
 
 | Responsibility | Go example | Gleam example |
 | --- | --- | --- |
@@ -326,9 +333,9 @@ The following responsibilities often appear together in Go code. They require se
 | Request cancellation | `r.Context()` passed into pgx | No equivalent request cancellation token in this example |
 | Operation deadline | `context.WithTimeout` around the request | A timeout for each Pog query and PostgreSQL statement |
 | Application lifetime | Signal context and explicit cleanup | An OTP application and its supervisor |
-| Durable work | PostgreSQL reservation rows | The same PostgreSQL rows |
+| Work that survives a restart | Reservation rows in PostgreSQL | The same rows in PostgreSQL |
 
-The Go request context reaches pool acquisition, queries, and commit.
+The Go application passes the request context to pool acquisition, queries, and commit.
 A client disconnect can cancel that context.
 
 The Gleam query helper sets a client timeout:
@@ -347,21 +354,22 @@ fn execute(
 ```
 
 Both pools also configure PostgreSQL `statement_timeout` to 1500 milliseconds.
-That server limit matters if the application stops its wait before PostgreSQL stops the query.
+This limit can stop a query after the application stops its wait for a response.
 
 These mechanisms are not equivalent.
-The Go deadline covers the complete operation. The Gleam timeout applies separately to each query, with separate pool acquisition behavior.
-The Gleam example does not cancel a transaction merely because the browser disconnects.
+The Go deadline applies to the complete operation.
+The Gleam timeout applies to each query separately. Pool acquisition has a separate timeout.
+The Gleam example does not cancel a transaction when the browser disconnects.
 
 A commit can succeed before the client receives its response. Cancellation cannot prove that no write occurred.
-The request key permits a safe retry after that uncertainty in either implementation.
+If the caller does not know the result, it can repeat the request with the same key in either application.
 
-Do not rename a dependency record `Context` and assume that it provides cancellation.
-Use distinct values for dependencies, identity, deadlines, and process lifetime.
+A dependency record named `Context` does not automatically provide cancellation.
+Use separate values for dependencies, identity, deadlines, and process lifetime.
 
 ## 7. A ticker loop becomes a small supervised process
 
-The Go worker owns its ticker and observes its lifetime context.
+The Go worker creates a ticker and checks its lifetime context.
 It executes one sweep at a time and reports recoverable failures.
 
 <!-- source: examples/reservation/go/main.go#worker -->
@@ -411,18 +419,18 @@ pub fn start(
 }
 ```
 
-The process is justified because periodic work continues independently of HTTP requests.
+The process is necessary because periodic work continues independently of HTTP requests.
 The reservation rules and SQL functions remain ordinary functions.
 
-The schedules differ deliberately.
-Go's ticker maintains a cadence and can discard ticks when the receiver falls behind.
-The Gleam worker schedules its next tick after the sweep completes. It provides a delay between sweeps and avoids a timer backlog.
-Both meet this service's requirement: release overdue reservations on a later sweep, without concurrent sweeps within one worker.
+The schedules differ.
+Go's ticker uses a regular interval. It can discard ticks when the receiver takes too long.
+The Gleam worker schedules its next tick after the sweep completes. The delay prevents a queue of timer messages between sweeps.
+Both workers release expired reservations on a later sweep. Each worker executes one sweep at a time.
 
 A database refusal is an error value. The worker reports it and waits for the next tick.
 A process crash is a different event. The Gleam supervisor can restart the worker.
 
-## 8. Supervision restores execution; PostgreSQL preserves work
+## 8. Process restart and stored reservations
 
 The application starts the database pool, the worker, and the Wisp HTTP transport under one supervisor.
 
@@ -443,12 +451,12 @@ The application starts the database pool, the worker, and the Wisp HTTP transpor
   |> result.map(fn(started) { started.pid })
 ```
 
-The callback captures a named pool handle, which remains useful after the pool process restarts.
+The callback retains a named pool handle. It can use the same handle after the pool process restarts.
 `OneForOne` restarts the failed child. It does not restart all children for every failure.
-The supervisor also has a finite restart tolerance; repeated crashes can stop the supervisor.
+The supervisor limits the number of restarts within a time interval. Repeated crashes can stop the supervisor.
 
-The expiry worker does not hold the authoritative reservation list.
-PostgreSQL holds that list, so a new worker can find reservations that became overdue while the service was down.
+PostgreSQL stores the reservations.
+A new worker reads the database to find reservations that expired while the service was stopped.
 
 Expiry changes status and returns stock in one SQL statement:
 
@@ -468,13 +476,13 @@ func (s *Service) Expire(ctx context.Context) error {
 }
 ```
 
-Only rows that change from `held` to `expired` contribute stock.
-A later sweep sees no qualifying rows and returns no stock for them.
+Only rows that change from `held` to `expired` return stock.
+A later sweep cannot select those rows again because their status is `expired`.
 PostgreSQL commits both changes or neither change.
 
-This is the durable part of the design. A supervisor alone cannot recover a lost reservation or prevent a duplicate stock credit.
+The database preserves the work after a restart. A supervisor alone cannot restore a lost reservation or prevent a duplicate stock credit.
 
-## 9. Shutdown needs an explicit contract
+## 9. Define the shutdown behavior
 
 The Go application cancels the worker, permits HTTP requests to finish, waits for the worker, and then closes the pool.
 
@@ -495,16 +503,21 @@ The Go application cancels the worker, permits HTTP requests to finish, waits fo
 ```
 
 The Gleam package registers an OTP application callback in `gleam.toml`.
-OTP owns the supervisor and its children.
-During an orderly shutdown, the supervisor stops children in reverse startup order: HTTP transport, worker, then database pool.
+OTP controls the supervisor and its children.
+During an orderly shutdown, the supervisor stops children in reverse startup order:
 
-The implementations do not promise identical request completion during shutdown.
-Go explicitly calls `Server.Shutdown` with a five-second budget.
-The Gleam example uses the transport's OTP shutdown behavior; it does not implement an equivalent application request drain.
+1. The HTTP transport.
+2. The worker.
+3. The database pool.
+
+The applications do not provide the same behavior for active requests during shutdown.
+Go calls `Server.Shutdown` with a limit of five seconds.
+The Gleam example uses the transport's OTP shutdown behavior.
+It does not provide an equivalent operation that waits for active HTTP requests to finish.
 
 A stopped connection can leave the caller uncertain about a commit.
 The transaction and request key remain necessary during shutdown and restart.
-Neither implementation promises cleanup after an uncatchable process kill.
+An uncatchable process kill can prevent cleanup in either application.
 
 ## 10. Use one browser to compare the server designs
 
@@ -531,9 +544,9 @@ The repeat button sends the original request key and quantity.
 A new reservation uses a new key.
 The page displays response data with `textContent`, so API text does not become executable HTML.
 
-The browser code is shared deliberately. This guide compares Go and Gleam server idioms.
-A Lustre version would add a separate comparison about browser state and effects.
-It is not necessary to explain the server's dependency, transaction, and process boundaries.
+Both applications use the same browser code. This guide compares Go and Gleam server idioms.
+A comparison with Lustre requires separate examples of browser state and effects.
+These examples show the server's dependency, transaction, and process boundaries.
 
 ## 11. Check the failure cases
 
@@ -551,16 +564,16 @@ It also runs Go's race detector.
 | --- | --- |
 | Incorrect bearer token | Reject the request before database access |
 | Invalid quantity | Reject the request |
-| Missing product | Return a refusal without a stock change |
+| The product does not exist | Return a refusal without a stock change |
 | Repeated request | Return the same reservation without a second stock change |
 | Same key, changed quantity | Return a conflict |
 | Concurrent reservations | Accept only the quantity that stock permits |
 | Concurrent identical requests | Create one reservation |
 | A database lock exceeds the statement limit | Return a bounded failure without a stock change |
-| A later insert fails after the stock update | Roll back the stock update and create no reservation |
+| An insert fails after the stock update | A rollback cancels the stock update. No reservation exists. |
 | Expiry | Return stock once |
 | Retry after expiry | Return the expired reservation |
-| Server restart | Find overdue rows and restore stock once |
+| Server restart | The worker finds expired reservations and restores stock once. |
 | Worker crash | The Gleam unit test observes a replacement worker |
 | Termination signal | Stop the server within ten seconds |
 
@@ -569,21 +582,28 @@ Manual browser checks use the commands in the [example README](../examples/reser
 
 The example has no checkout confirmation, reservation deletion, migration system, or token issuer.
 Both listeners bind to loopback. PostgreSQL uses a local example password and disables TLS for this local exercise.
-Those are explicit limits of the example, not recommendations for a deployed service.
+These limits apply only to this local example. They do not specify the configuration for a deployed service.
 
 ## Source and maintenance
 
 The manifest and `go.sum` record the dependency versions. The application uses Pog 4.1.0 and Wisp 2.2.2.
 The examples require the Erlang target. They do not claim browser compatibility for OTP or PostgreSQL code.
 
-After a source change, update the excerpts:
+After a source change, do these steps from the repository root:
+
+1. Update the code examples:
 
 ```sh
 python3 scripts/sync-go-to-gleam.py
+```
+
+2. Check that the code examples match their source files:
+
+```sh
 python3 scripts/sync-go-to-gleam.py --check
 ```
 
-Relevant primary references:
+Primary references:
 
 - [Gleam conventions and module design](https://gleam.run/documentation/conventions-patterns-and-anti-patterns/)
 - [Pog 4.1.0](https://hexdocs.pm/pog/4.1.0/pog.html)
