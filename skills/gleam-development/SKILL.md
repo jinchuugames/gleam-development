@@ -84,6 +84,12 @@ list from memory — check each name you are about to write.
 - Pure functions first; push effects to the edges.
 - Custom types plus exhaustive `case` instead of strings, maps, or booleans to
   encode state.
+- No `_ ->` arm on a custom type: name every variant, so a new one fails the
+  build instead of falling into the catch-all. `_ ->` is fine on open sets:
+  strings, ints, lists.
+- Keep comments short. A `////` module header says what the module owns in a
+  few lines; `///` documents a public item; `//` explains a non-obvious why.
+  No essays, and no history of the change: git holds that.
 - `Result(a, e)` for recoverable failure with a custom error type; `Option(a)`
   for absence. No exceptions as control flow, no dynamic typing to dodge a
   type.

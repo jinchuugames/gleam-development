@@ -58,6 +58,25 @@ Rules of thumb:
   exhaustiveness off for every future variant as well.
 - Name the error type after the failure, not after the function:
   `EmptyCart`, `NegativeQuantity(Int)`, `UnknownSku(String)`.
+- A catch-all is fine where the set of values is open: a `String`, an `Int`,
+  a list's tail, an error from another package. On a custom type, list the
+  variants, even when several share one body:
+
+  ```gleam
+  // Wrong: a new Status variant compiles and is silently treated as not shipped.
+  case status {
+    Shipped(..) -> True
+    _ -> False
+  }
+
+  // Right: a new variant stops the build here.
+  case status {
+    Shipped(..) -> True
+    Draft | Placed(..) | Cancelled(..) -> False
+  }
+  ```
+
+  To audit: `grep -rn -B4 "^\s*_ ->" src` and check what each `case` matches on.
 - Do not expose internal types as `pub` unless a caller must construct or match
   them. `pub opaque type` keeps invariants when construction must be guarded.
 
@@ -71,6 +90,23 @@ Rules of thumb:
   instead of long `case` bodies.
 - Match values with `case` or `let` inside the function body.
   Gleam function parameters do not support destructuring patterns.
+
+## Comments
+
+Gleam has three comment kinds, and each has one job:
+
+- `////` at the top of a module: what the module owns and what it does not.
+  A few lines, so a reader can decide whether to keep reading.
+- `///` above a public function, type or constant: what a caller needs to
+  know. These become the generated docs (`gleam docs build`).
+- `//` inside code: a reason the code cannot show, such as a workaround, a
+  bound, or why the obvious version is wrong.
+
+Keep them short. A comment that retells the code, narrates the change ("moved
+here from X"), or argues a design over several paragraphs goes stale the first
+time the code changes, and nothing checks it. Put history in the commit
+message and design arguments in a design doc. As a rough check, if a module's
+comments outweigh its code, cut them.
 
 ## Pipelines
 
