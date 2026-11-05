@@ -1,0 +1,188 @@
+#!/usr/bin/env bash
+# gleam-doc-check: check Gleam doc comments against references/documentation.md.
+#
+#   gleam-doc-check [options] [path...]      (default path: src)
+#
+# Rules: missing-module-doc, missing-doc, summary-verb, heading-level,
+# module-sections, function-sections, banned-word, sentence-length.
+#
+# Options:
+#   --words <file>            more banned words or phrases, one per line
+#   --max-words <n>           longest allowed sentence (default 25)
+#   --exclude <glob>          skip matching files; repeatable
+#   --baseline <file>         ignore the findings listed in this file
+#   --write-baseline <file>   write all current findings to this file, exit 0
+#
+# Output: path:line: rule: message. Exit 1 when a finding is not in the
+# baseline. Generated files (a "generated" line in the first five) are skipped.
+set -euo pipefail
+
+words_file=""
+max_words=25
+baseline=""
+write_baseline=""
+excludes=()
+paths=()
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --words) words_file="${2:?--words requires a file}"; shift 2 ;;
+    --max-words) max_words="${2:?--max-words requires a number}"; shift 2 ;;
+    --exclude) excludes+=("${2:?--exclude requires a glob}"); shift 2 ;;
+    --baseline) baseline="${2:?--baseline requires a file}"; shift 2 ;;
+    --write-baseline) write_baseline="${2:?--write-baseline requires a file}"; shift 2 ;;
+    -h|--help) sed -n '2,19p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    -*) echo "gleam-doc-check: unknown option $1" >&2; exit 2 ;;
+    *) paths+=("$1"); shift ;;
+  esac
+done
+[ ${#paths[@]} -gt 0 ] || paths=(src)
+
+default_words="carries
+carry
+answers
+seam
+surface
+rail
+lane
+derive
+derives
+crosses
+in front of
+the one
+simply
+just
+basically
+obviously"
+
+words=$default_words
+if [ -n "$words_file" ]; then
+  words="$words
+$(grep -v '^[[:space:]]*\(#\|$\)' "$words_file" || true)"
+fi
+
+files=()
+while IFS= read -r file; do
+  skip=false
+  for glob in "${excludes[@]+"${excludes[@]}"}"; do
+    # shellcheck disable=SC2254
+    case "$file" in $glob) skip=true ;; esac
+  done
+  $skip && continue
+  head -5 "$file" | grep -qi 'generated' && continue
+  files+=("$file")
+done < <(find "${paths[@]}" -name '*.gleam' -type f | sort)
+
+findings=$(mktemp "${TMPDIR:-/tmp}/gleam-doc-check.XXXXXX")
+trap 'rm -f -- "$findings" "$findings.keys" "$findings.new"' EXIT
+
+if [ ${#files[@]} -gt 0 ]; then
+  awk -v maxw="$max_words" -v words="$(printf '%s' "$words" | tr '\n' '|')" '
+  function norm(s) { s = tolower(s); gsub(/`[^`]*`/, " ", s); gsub(/[^a-z0-9]+/, " ", s); return " " s " " }
+  function report(line, rule, msg) { printf "%s:%d: %s: %s\n", FILENAME, line, rule, msg }
+  function opening(s,   w, n, i, out) {
+    n = split(s, w, /[ \t]+/); out = ""
+    for (i = 1; i <= n && i <= 6; i++) out = out (out == "" ? "" : " ") w[i]
+    return out
+  }
+  function flush(   t, n, parts, i, cnt, ws, j) {
+    if (para == "") return
+    t = para; gsub(/[.!?] /, "\n", t); gsub(/[.!?]$/, "", t)
+    n = split(t, parts, "\n")
+    for (i = 1; i <= n; i++) {
+      cnt = 0
+      split(parts[i], ws, /[ \t]+/)
+      for (j in ws) if (ws[j] != "") cnt++
+      if (cnt > maxw) report(paraline, "sentence-length", cnt " words: \"" opening(parts[i]) " ...\"")
+    }
+    para = ""
+  }
+  function endfile() {
+    flush()
+    if (curfile != "" && !hasmodule) printf "%s:1: missing-module-doc: no //// module header\n", curfile
+  }
+  function text(content, line,   lw, i) {
+    if (content ~ /^```/) { flush(); fence = !fence; return }
+    if (fence) return
+    lw = norm(content)
+    for (i = 1; i <= nbanned; i++)
+      if (index(lw, " " banned[i] " ")) report(line, "banned-word", "\"" banned[i] "\"")
+    if (content ~ /^[ \t]*$/ || content ~ /^\|/ || content ~ /^#/) { flush(); return }
+    if (content ~ /^> ?/) sub(/^> ?/, "", content)
+    if (content ~ /^([-*]|[0-9]+\.) /) { flush(); sub(/^([-*]|[0-9]+\.) /, "", content) }
+    if (para == "") paraline = line
+    para = para " " content
+  }
+  BEGIN {
+    nbanned = split(words, raw, "|")
+    for (i = 1; i <= nbanned; i++) { w = norm(raw[i]); gsub(/^ +| +$/, "", w); banned[i] = w }
+    order["terms"] = 1; order["rules"] = 2; order["examples"] = 3; order["related modules"] = 4
+    fnheads["errors"] = 1; fnheads["panics"] = 1; fnheads["example"] = 1; fnheads["examples"] = 1
+  }
+  FNR == 1 {
+    endfile()
+    curfile = FILENAME; hasmodule = 0; last = "code"; fence = 0; para = ""; lastsection = 0; summary = ""
+  }
+  /^[ \t]*\/\/\/\// {
+    hasmodule = 1
+    c = $0; sub(/^[ \t]*\/\/\/\/ ?/, "", c)
+    if (!fence && c ~ /^## /) {
+      h = tolower(substr(c, 4)); gsub(/^ +| +$/, "", h)
+      if (!(h in order)) report(FNR, "module-sections", "unknown section \"" substr(c, 4) "\"")
+      else if (order[h] < lastsection) report(FNR, "module-sections", "\"" substr(c, 4) "\" is out of order")
+      else lastsection = order[h]
+    } else if (!fence && (c ~ /^# / || c ~ /^###/)) {
+      report(FNR, "module-sections", "use ## for module sections")
+    }
+    text(c, FNR); last = "module"; next
+  }
+  /^[ \t]*\/\/\// {
+    c = $0; sub(/^[ \t]*\/\/\/ ?/, "", c)
+    if (last != "doc") { flush(); fence = 0; summary = c; summaryline = FNR }
+    if (!fence && (c ~ /^# / || c ~ /^## /)) report(FNR, "heading-level", "use ### inside item docs")
+    else if (!fence && c ~ /^### /) {
+      h = tolower(substr(c, 5)); gsub(/^ +| +$/, "", h)
+      if (!(h in fnheads)) report(FNR, "function-sections", "unknown section \"" substr(c, 5) "\"")
+    }
+    text(c, FNR); last = "doc"; next
+  }
+  /^@/ { next }
+  /^pub (fn|type|opaque type|const) / {
+    flush()
+    name = $0; sub(/^pub (opaque )?(fn|type|const) /, "", name); sub(/[^A-Za-z0-9_].*/, "", name)
+    if (last != "doc") report(FNR, "missing-doc", name)
+    else if ($0 ~ /^pub fn /) {
+      first = summary; gsub(/`/, "", first); sub(/^[ \t]+/, "", first); sub(/[ \t].*/, "", first)
+      if (first !~ /s$/) report(summaryline, "summary-verb", name ": start with a verb such as Returns, not \"" first "\"")
+    }
+    last = "code"; next
+  }
+  /^[ \t]*$/ { flush(); last = "blank"; next }
+  { flush(); last = "code" }
+  END { endfile() }
+  ' "${files[@]}" >"$findings"
+fi
+
+key() { sed -E 's/^([^:]+):[0-9]+: /\1: /' "$1"; }
+
+if [ -n "$write_baseline" ]; then
+  key "$findings" | sort >"$write_baseline"
+  echo "gleam-doc-check: wrote $(wc -l <"$write_baseline" | tr -d ' ') findings to $write_baseline"
+  exit 0
+fi
+
+if [ -n "$baseline" ]; then
+  key "$findings" | sort >"$findings.keys"
+  sort "$baseline" | comm -23 "$findings.keys" - >"$findings.new"
+  awk 'NR == FNR { want[$0]++; next }
+       { k = $0; sub(/:[0-9]+: /, ": ", k); if (want[k] > 0) { print; want[k]-- } }' \
+    "$findings.new" "$findings" >"$findings.keys"
+  mv "$findings.keys" "$findings"
+fi
+
+count=$(wc -l <"$findings" | tr -d ' ')
+cat "$findings"
+if [ "$count" -gt 0 ]; then
+  echo "gleam-doc-check: $count findings in ${#files[@]} files; see references/documentation.md" >&2
+  exit 1
+fi
+echo "gleam-doc-check: ${#files[@]} files, no findings"

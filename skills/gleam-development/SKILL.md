@@ -90,6 +90,9 @@ list from memory — check each name you are about to write.
 - Keep comments short. A `////` module header says what the module owns in a
   few lines; `///` documents a public item; `//` explains a non-obvious why.
   No essays, and no history of the change: git holds that.
+- Doc comments follow `references/documentation.md`: a verb-first summary,
+  fixed sections, short sentences, no banned words. Run
+  `scripts/gleam-doc-check src` after you change a `////` or `///` comment.
 - `Result(a, e)` for recoverable failure with a custom error type; `Option(a)`
   for absence. No exceptions as control flow, no dynamic typing to dodge a
   type.
@@ -146,6 +149,7 @@ green and the value is wrong, `references/debugging.md` has the loop.
 | File | Load when |
 | --- | --- |
 | `references/idiomatic-gleam.md` | writing new modules, reviewing a diff for un-Gleam patterns |
+| `references/documentation.md` | writing or changing a `////` or `///` doc comment |
 | `references/stdlib-and-dependencies.md` | unsure which stdlib function or dependency version to use |
 | `references/testing.md` | adding or fixing tests, or tests are not being discovered |
 | `references/debugging.md` | something fails, a value is wrong, or a bug compiles and survives the build |
