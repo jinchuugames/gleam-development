@@ -20,6 +20,7 @@ if command -v shellcheck >/dev/null; then
 fi
 
 step "formatting"
+python3 "$root/scripts/sync-go-to-gleam.py" --check
 for dir in "$root"/examples/*/ "$root"/benchmarks/tasks/*/work/; do
   [ -f "$dir/gleam.toml" ] || continue
   ( cd "$dir" && gleam format --check src test )
@@ -208,6 +209,9 @@ step "benchmark self-check"
 
 step "benchmark fixture replay"
 "$root/benchmarks/harness/run.sh" --out "$scratch/bench" | tail -12
+
+step "Go and Gleam reservation service"
+python3 "$root/examples/reservation/check.py"
 
 echo
 echo "check.sh: all steps passed"

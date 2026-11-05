@@ -2,8 +2,8 @@
 
 An agent toolkit for Gleam: a skill that makes coding agents look up real APIs
 before writing them, an `AGENTS.md` template for Gleam projects, a command-line
-documentation lookup that reads the versions you actually have installed, two
-architectural examples, and a benchmark harness with hidden tests.
+documentation lookup that reads the versions you actually have installed,
+architectural examples, a Go-to-Gleam comparison, and a benchmark harness with hidden tests.
 
 It exists because agents invent standard-library functions in Gleam — `dict.update`
 does not exist in `gleam_stdlib` 1.0.5, `dict.upsert` does. Those mistakes are
@@ -20,6 +20,8 @@ repair. This repository packages that loop.
 | `scripts/check.sh` | Verifies formatting, examples, fixtures, lookup, and the benchmark guard |
 | `examples/order-pipeline` | Pure domain: custom types, state transitions, `Result` validation, pricing |
 | `examples/inventory` | Architecture: pure core, store boundary, why an actor is not justified |
+| `docs/go-to-gleam.md` | Paired source excerpts: dependencies, Wisp handlers, transactions, context, periodic work, and shutdown |
+| `examples/reservation` | Executable Go and Gleam servers with PostgreSQL, one browser page, and an isolated database check |
 | `benchmarks/` | Model-agnostic harness, nine tasks, hidden tests, discovery guard |
 | `docs/research.md` | What the ecosystem actually provides, verified on 2026-11-02 |
 | `docs/tradeoffs.md` | Where Gleam is weaker: deployment, the BEAM, ecosystem, the JavaScript target, debugging |
@@ -36,6 +38,25 @@ repair. This repository packages that loop.
 
 Dependencies are fetched by Gleam itself on first build; nothing here requires a
 service, a model provider, or an account.
+
+The complete `scripts/check.sh` also requires Go 1.23 or newer, Python 3.10 or newer, and Docker.
+The reservation check creates its own temporary PostgreSQL container. It requires no external database or account.
+
+## Go to Gleam
+
+Read [Go to Gleam: a reservation service](docs/go-to-gleam.md) for a comparison of application design choices.
+The guide follows an HTTP request through Wisp, PostgreSQL transactions, request retries, periodic expiry, and application shutdown.
+It separates dependency records from cancellation and deadlines.
+
+Both implementations compile and expose the same API to one browser page.
+The guide excerpts come from their source files. The repository check rejects stale excerpts.
+
+```sh
+python3 examples/reservation/check.py
+```
+
+The check covers concurrent stock reservations, duplicate requests, database timeouts, expiry, restart, and shutdown.
+See the [example README](examples/reservation/README.md) for manual browser commands and the example's limits.
 
 ## Install
 
