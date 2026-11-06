@@ -4,14 +4,20 @@
 #   gleam-doc-check [options] [path...]      (default path: src)
 #
 # Rules: missing-module-doc, missing-doc, summary-verb, heading-level,
-# module-sections, function-sections, banned-word, sentence-length.
+# module-sections, function-sections, banned-word, sentence-length, and with
+# --errors also errors-section.
 #
 # Options:
-#   --words <file>            more banned words or phrases, one per line
+#   --words <file>            more banned words, one per line; "from => to"
+#                             also gives the replacement that --fix writes
 #   --max-words <n>           longest allowed sentence (default 25)
 #   --exclude <glob>          skip matching files; repeatable
 #   --baseline <file>         ignore the findings listed in this file
 #   --write-baseline <file>   write all current findings to this file, exit 0
+#   --fix                     rewrite the findings that have a safe fix, then
+#                             check again; review the diff before you commit
+#   --errors                  check each ### Errors section against the error
+#                             type (runs gleam export package-interface)
 #
 # Output: path:line: rule: message. Exit 1 when a finding is not in the
 # baseline. Generated files (a "generated" line in the first five) are skipped.
@@ -21,6 +27,8 @@ words_file=""
 max_words=25
 baseline=""
 write_baseline=""
+fix=false
+errors=false
 excludes=()
 paths=()
 while [ $# -gt 0 ]; do
@@ -30,35 +38,62 @@ while [ $# -gt 0 ]; do
     --exclude) excludes+=("${2:?--exclude requires a glob}"); shift 2 ;;
     --baseline) baseline="${2:?--baseline requires a file}"; shift 2 ;;
     --write-baseline) write_baseline="${2:?--write-baseline requires a file}"; shift 2 ;;
-    -h|--help) sed -n '2,19p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    --fix) fix=true; shift ;;
+    --errors) errors=true; shift ;;
+    -h|--help) sed -n '2,24p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
     -*) echo "gleam-doc-check: unknown option $1" >&2; exit 2 ;;
     *) paths+=("$1"); shift ;;
   esac
 done
 [ ${#paths[@]} -gt 0 ] || paths=(src)
 
-default_words="carries
-carry
-answers
+# Each line is a banned word or phrase. "from => to" also names the fix; an
+# empty "to" deletes the word. A word without "=>" has no safe fix.
+default_words="carries => holds
+carry => hold
+answers => returns
 seam
 surface
 rail
 lane
-derive
-derives
+derive => calculate
+derives => calculates
 crosses
 in front of
 the one
-simply
-just
-basically
-obviously"
+simply =>
+just =>
+basically =>
+obviously =>"
+
+# Longer phrases that --fix rewrites before the banned word itself, so that
+# "answers with" becomes "returns", not "returns with".
+fix_phrases="answers with=>returns|answer with=>return|answered with=>returned"
+
+# Imperative first words that --fix turns into "-s" verbs: "Parse" -> "Parses".
+# Only words that are verbs in a doc summary; nouns such as "Bound" are left out.
+fix_verbs="add apply assert attach block build buy calculate call cancel charge
+check claim clamp clear close collect combine compare compute convert copy count
+craft create debit decide declare decode delete deliver drain drop emit encode
+ensure enqueue fabricate fetch file fill filter find finish flip flush forget
+format freeze generate get give grant handle hash insert join keep leave list
+listen load lock log look make map mark merge mint mount move normalise
+normalize notify observe open parse pay pick place post prepare print publish
+pull push put queue read rebuild receive record redeem refund refuse register
+reject release reload remove rename render repair replace reply report reserve
+reset resolve restore return revoke run save schedule search seed select sell
+send serve set settle ship sort spawn spend split stamp start stop store strip
+subscribe swap take tell toggle track trim try turn unlock update upsert
+validate verify wait wrap write"
 
 words=$default_words
 if [ -n "$words_file" ]; then
   words="$words
 $(grep -v '^[[:space:]]*\(#\|$\)' "$words_file" || true)"
 fi
+# banned: "a|b|c" for the check. repls: "from=>to|..." for --fix.
+banned_list=$(printf '%s\n' "$words" | sed -E 's/[[:space:]]*=>.*$//' | tr '\n' '|')
+repl_list=$(printf '%s\n' "$words" | grep '=>' | sed -E 's/[[:space:]]*=>[[:space:]]*/=>/; s/[[:space:]]+$//' | tr '\n' '|' || true)
 
 files=()
 while IFS= read -r file; do
@@ -73,10 +108,11 @@ while IFS= read -r file; do
 done < <(find "${paths[@]}" -name '*.gleam' -type f | sort)
 
 findings=$(mktemp "${TMPDIR:-/tmp}/gleam-doc-check.XXXXXX")
-trap 'rm -f -- "$findings" "$findings.keys" "$findings.new"' EXIT
+trap 'rm -rf -- "$findings" "$findings".*' EXIT
 
-if [ ${#files[@]} -gt 0 ]; then
-  awk -v maxw="$max_words" -v words="$(printf '%s' "$words" | tr '\n' '|')" '
+comment_check() {
+  [ ${#files[@]} -gt 0 ] || return 0
+  awk -v maxw="$max_words" -v words="$banned_list" '
   function norm(s) { s = tolower(s); gsub(/`[^`]*`/, " ", s); gsub(/[^a-z0-9]+/, " ", s); return " " s " " }
   function report(line, rule, msg) { printf "%s:%d: %s: %s\n", FILENAME, line, rule, msg }
   function opening(s,   w, n, i, out) {
@@ -105,7 +141,7 @@ if [ ${#files[@]} -gt 0 ]; then
     if (fence) return
     lw = norm(content)
     for (i = 1; i <= nbanned; i++)
-      if (index(lw, " " banned[i] " ")) report(line, "banned-word", "\"" banned[i] "\"")
+      if (banned[i] != "" && index(lw, " " banned[i] " ")) report(line, "banned-word", "\"" banned[i] "\"")
     if (content ~ /^[ \t]*$/ || content ~ /^\|/ || content ~ /^#/) { flush(); return }
     if (content ~ /^> ?/) sub(/^> ?/, "", content)
     if (content ~ /^([-*]|[0-9]+\.) /) { flush(); sub(/^([-*]|[0-9]+\.) /, "", content) }
@@ -159,7 +195,208 @@ if [ ${#files[@]} -gt 0 ]; then
   /^[ \t]*$/ { flush(); last = "blank"; next }
   { flush(); last = "code" }
   END { endfile() }
-  ' "${files[@]}" >"$findings"
+  ' "${files[@]}"
+}
+
+# errors-section: a public function that returns Result(_, E), where E is a
+# custom type of the same package, needs a "### Errors" section, and each
+# constructor that a list item names must be a variant of E, or a type of the
+# package that E wraps, or a variant of such a type. Which variants a
+# function can return is not visible in the interface, so a missing item is not
+# reported.
+errors_check() {
+  [ ${#files[@]} -gt 0 ] || return 0
+  local map="$findings.map" roots=() root dir p a
+  : >"$map"
+  for p in "${files[@]}"; do
+    case "$p" in /*) a=$p ;; *) a="$PWD/$p" ;; esac
+    printf '%s\t%s\n' "$a" "$p" >>"$map"
+  done
+  awk -F'\t' -v OFS='\t' '{ gsub(/\/\.\//, "/", $1); gsub(/\/\/+/, "/", $1); print }' "$map" >"$map.n"
+  mv "$map.n" "$map"
+  for p in "${paths[@]}"; do
+    if [ -d "$p" ]; then dir=$(cd "$p" && pwd); else dir=$(cd "$(dirname "$p")" && pwd); fi
+    while [ "$dir" != / ] && [ ! -f "$dir/gleam.toml" ]; do dir=$(dirname "$dir"); done
+    [ -f "$dir/gleam.toml" ] || { echo "gleam-doc-check: --errors: no gleam.toml above $p" >&2; exit 2; }
+    case " ${roots[*]+"${roots[*]}"} " in *" $dir "*) ;; *) roots+=("$dir") ;; esac
+  done
+  for root in "${roots[@]}"; do
+    if ! (cd "$root" && gleam export package-interface --out "$findings.json") >"$findings.log" 2>&1; then
+      cat "$findings.log" >&2
+      echo "gleam-doc-check: --errors: gleam export package-interface failed in $root" >&2
+      exit 2
+    fi
+    jq -r '
+      # The variants of a type and of every type of this package that its
+      # constructors wrap, such as Refused(Refusal) -> the variants of Refusal.
+      def closure($mods; $pkg; $queue; $seen):
+        if ($queue | length) == 0 then $seen
+        elif ($seen | index([$queue[0]])) != null then closure($mods; $pkg; $queue[1:]; $seen)
+        else ($queue[0] | split("#")) as [$m, $n]
+          | [($mods[$m].types[$n].constructors // [])[] | .parameters[]?.type
+             | select(.kind == "named" and .package == $pkg) | "\(.module)#\(.name)"] as $next
+          | closure($mods; $pkg; $queue[1:] + $next; $seen + [$queue[0]])
+        end;
+      .name as $pkg | .modules as $mods
+      | $mods | to_entries[] | .key as $m
+      | .value.functions | to_entries[]
+      | select(.value.return.kind == "named" and .value.return.name == "Result"
+               and .value.return.module == "gleam")
+      | .value.return.parameters[1] as $e
+      | select($e.kind == "named" and $e.package == $pkg)
+      | select(($mods[$e.module].types[$e.name].constructors // []) | length > 0)
+      | select(.value.documentation != null)
+      | [closure($mods; $pkg; ["\($e.module)#\($e.name)"]; [])[] | split("#") as [$m2, $n2]
+         | $n2, (($mods[$m2].types[$n2].constructors // [])[] | .name)] as $cs
+      | [$m, .key, $e.name, ($cs | join(",")), .value.documentation] | @tsv
+    ' "$findings.json" | awk -F'\t' -v root="$root" '
+      function fnline(file, name,   l, n) {
+        n = 0
+        while ((getline l < file) > 0) { n++; if (index(l, "pub fn " name "(") == 1) { close(file); return n } }
+        close(file); return 1
+      }
+      function cut(s,   i, k, w, best) {
+        best = 0; split(" if | when | because | for ", w, "|")
+        for (k in w) { i = index(s, w[k]); if (i > 0 && (best == 0 || i < best)) best = i }
+        return best ? substr(s, 1, best) : s
+      }
+      NR == FNR { given[$1] = $2; next }
+      {
+        file = root "/src/" $1 ".gleam"
+        if (!(file in given)) next
+        name = $2; etype = $3
+        delete cons; split($4, cl, ","); for (k in cl) cons[cl[k]] = 1
+        doc = $5; gsub(/\\n/, "\n", doc); gsub(/\\t/, " ", doc); gsub(/\\\\/, "\\", doc)
+        n = split(doc, L, "\n"); insec = 0; found = 0; fence = 0; line = 0
+        for (i = 1; i <= n; i++) {
+          t = L[i]; sub(/^ /, "", t)
+          if (t ~ /^```/) { fence = !fence; continue }
+          if (fence) continue
+          if (t ~ /^### /) { insec = (tolower(t) ~ /^### errors[ \t]*$/); if (insec) found = 1; continue }
+          if (!insec || t !~ /^- /) continue
+          item = cut(substr(t, 3))
+          while (match(item, /`[^`]*`/)) {
+            tok = substr(item, RSTART + 1, RLENGTH - 2); item = substr(item, RSTART + RLENGTH)
+            sub(/\(.*/, "", tok); sub(/^.*\./, "", tok)
+            if (tok ~ /^[A-Z][A-Za-z0-9_]*$/ && !(tok in cons) && tok != "Ok" && tok != "Error" && tok != "Nil") {
+              if (!line) line = fnline(file, name)
+              printf "%s:%d: errors-section: %s: `%s` is not a variant of %s\n", given[file], line, name, tok, etype
+            }
+          }
+        }
+        if (!found) printf "%s:%d: errors-section: %s: returns %s but has no ### Errors section\n", given[file], fnline(file, name), name, etype
+      }
+    ' "$map" -
+  done
+}
+
+run_check() {
+  comment_check >"$findings"
+  if $errors; then errors_check >>"$findings"; fi
+}
+
+# Applies the safe fixes to the lines that the findings name: a banned word
+# with a "=>" replacement, and a summary that starts with a known imperative.
+apply_fixes() {
+  local file total=0 n
+  while IFS= read -r file; do
+    n=$(awk -v target="$file" -v repls="$repl_list" -v phrases="$fix_phrases" -v verbs="$(printf %s "$fix_verbs" | tr '\n' ' ')" '
+      function ci(w,   i, c, out) {
+        out = ""
+        for (i = 1; i <= length(w); i++) {
+          c = substr(w, i, 1)
+          if (c ~ /[a-z]/) out = out "[" toupper(c) c "]"
+          else if (c == " ") out = out "[ \t]+"
+          else if (c ~ /[A-Za-z0-9]/) out = out c
+          else out = out "[" c "]"
+        }
+        return out
+      }
+      function cap(s) { return toupper(substr(s, 1, 1)) substr(s, 2) }
+      function third(w,   lw) {
+        lw = tolower(w)
+        if (lw ~ /(s|sh|ch|x|z|o)$/) return w "es"
+        if (lw ~ /[^aeiou]y$/) return substr(w, 1, length(w) - 1) "ies"
+        return w "s"
+      }
+      function swap(seg, w, r,   pat, out, pre, m, rest, lead, word) {
+        pat = "(^|[^A-Za-z0-9_])" ci(w) "([^A-Za-z0-9_]|$)"; out = ""
+        while (match(seg, pat)) {
+          pre = substr(seg, 1, RSTART - 1); m = substr(seg, RSTART, RLENGTH); rest = substr(seg, RSTART + RLENGTH)
+          lead = ""; if (m !~ /^[A-Za-z]/) { lead = substr(m, 1, 1); m = substr(m, 2) }
+          if (m ~ /[^A-Za-z]$/) { rest = substr(m, length(m)) rest; m = substr(m, 1, length(m) - 1) }
+          word = m
+          if (r == "") {
+            if (substr(rest, 1, 1) == " ") rest = substr(rest, 2)
+            else if (lead == " ") lead = ""
+            if (word ~ /^[A-Z]/) rest = cap(rest)
+            out = out pre lead
+          } else if (word ~ /^[A-Z][A-Z ]+$/) out = out pre lead toupper(r)
+          else out = out pre lead (word ~ /^[A-Z]/ ? cap(r) : r)
+          seg = rest; changed = 1
+        }
+        return out seg
+      }
+      function fixword(content, w, r,   parts, n, i, out) {
+        n = split(content, parts, "`"); out = ""
+        for (i = 1; i <= n; i++) out = out (i > 1 ? "`" : "") (i % 2 ? swap(parts[i], w, r) : parts[i])
+        return out
+      }
+      BEGIN {
+        n = split(repls, rl, "|")
+        for (i = 1; i <= n; i++) if ((k = index(rl[i], "=>")) > 0) {
+          f = tolower(substr(rl[i], 1, k - 1)); gsub(/[^a-z0-9]+/, " ", f); gsub(/^ +| +$/, "", f)
+          repl[f] = substr(rl[i], k + 2)
+        }
+        n = split(phrases, pl, "|")
+        for (i = 1; i <= n; i++) if ((k = index(pl[i], "=>")) > 0) { np++; pfrom[np] = substr(pl[i], 1, k - 1); pto[np] = substr(pl[i], k + 2) }
+        n = split(verbs, vl, /[ \t\n]+/); for (i = 1; i <= n; i++) if (vl[i] != "") verb[vl[i]] = 1
+      }
+      NR == FNR {
+        p = index($0, ": "); head = substr($0, 1, p - 1); body = substr($0, p + 2)
+        q = 0; for (i = length(head); i > 0; i--) if (substr(head, i, 1) == ":") { q = i; break }
+        if (q == 0 || substr(head, 1, q - 1) != target) next
+        ln = substr(head, q + 1) + 0
+        if (body ~ /^banned-word: "/) {
+          w = body; sub(/^banned-word: "/, "", w); sub(/"$/, "", w)
+          if (w in repl) todo[ln] = todo[ln] "w" w "\n"
+        } else if (body ~ /^summary-verb: /) todo[ln] = todo[ln] "v\n"
+        next
+      }
+      {
+        line = $0
+        if (FNR in todo && match(line, /^[ \t]*\/\/\/\/? ?/)) {
+          prefix = substr(line, 1, RLENGTH); content = substr(line, RLENGTH + 1)
+          m = split(todo[FNR], acts, "\n")
+          for (a = 1; a <= m; a++) {
+            act = acts[a]; changed = 0
+            if (substr(act, 1, 1) == "w") {
+              w = substr(act, 2)
+              for (j = 1; j <= np; j++) if (index(" " pfrom[j] " ", " " w " ")) content = fixword(content, pfrom[j], pto[j])
+              content = fixword(content, w, repl[w])
+            } else if (act == "v" && match(content, /^[A-Za-z]+/)) {
+              first = substr(content, 1, RLENGTH); lw = tolower(first)
+              if (lw == "whether") { content = "Returns whether" substr(content, RLENGTH + 1); changed = 1 }
+              else if (lw in verb) { content = third(cap(first)) substr(content, RLENGTH + 1); changed = 1 }
+            }
+            if (changed) fixed++
+          }
+          line = prefix content
+        }
+        print line > (target ".fix")
+      }
+      END { close(target ".fix"); print fixed + 0 }
+    ' "$findings" "$file")
+    if [ "$n" -gt 0 ]; then cat "$file.fix" >"$file"; total=$((total + n)); fi
+    rm -f -- "$file.fix"
+  done < <(grep -E ': (banned-word|summary-verb): ' "$findings" | sed -E 's/^(.*):[0-9]+: (banned-word|summary-verb): .*/\1/' | sort -u)
+  echo "gleam-doc-check: fixed $total findings; review the diff" >&2
+}
+
+run_check
+if $fix; then
+  apply_fixes
+  run_check
 fi
 
 key() { sed -E 's/^([^:]+):[0-9]+: /\1: /' "$1"; }

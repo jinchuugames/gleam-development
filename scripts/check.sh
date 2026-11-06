@@ -254,6 +254,104 @@ new=$("$doc_check" --baseline "$docs/baseline.txt" "$docs/bad/src" 2>&1) && {
 }
 assert_contains "$new" "missing-doc: extra" "a baseline still reports a new finding"
 
+# --fix rewrites the safe findings in place and leaves code spans and the
+# findings without a safe fix alone.
+mkdir -p "$docs/fix/src"
+cat >"$docs/fix/src/pool.gleam" <<'EOF'
+//// Holds the pools. WHAT A POOL CARRIES is its stake.
+
+/// Parse one pool. The reply carries the stake and answers with `carries`.
+pub fn parse(text: String) -> String {
+  text
+}
+
+/// Whether the pool is open. Simply the one check that the gate uses.
+pub fn is_open(open: Bool) -> Bool {
+  open
+}
+EOF
+cat >"$docs/fix/expected.gleam" <<'EOF'
+//// Holds the pools. WHAT A POOL HOLDS is its stake.
+
+/// Parses one pool. The reply holds the stake and returns `carries`.
+pub fn parse(text: String) -> String {
+  text
+}
+
+/// Returns whether the pool is open. The one check that the gate uses.
+pub fn is_open(open: Bool) -> Bool {
+  open
+}
+EOF
+fixed=$("$doc_check" --fix "$docs/fix/src" 2>&1) && {
+  echo "DOC CHECK FAILURE: --fix removed a finding that has no safe fix" >&2
+  exit 1
+}
+diff -u "$docs/fix/expected.gleam" "$docs/fix/src/pool.gleam" || {
+  echo "DOC CHECK FAILURE: --fix wrote an unexpected result" >&2
+  exit 1
+}
+assert_contains "$fixed" 'banned-word: "the one"' "--fix leaves a finding without a safe fix"
+echo "PASS: --fix rewrites only the safe findings"
+
+# --errors reads the package interface, so the probe is a project that builds.
+mkdir -p "$docs/errors/src"
+printf 'name = "errors_probe"\nversion = "1.0.0"\n' >"$docs/errors/gleam.toml"
+cat >"$docs/errors/src/errors_probe.gleam" <<'EOF'
+//// Checks the error sections.
+
+/// Why the rules refuse a request.
+pub type Reason {
+  /// The value is below the minimum.
+  TooLow
+}
+
+/// Why a request failed.
+pub type ProbeError {
+  /// The rules refuse the request.
+  Refused(reason: Reason)
+  /// The store is not available.
+  Unavailable
+}
+
+/// Returns `value` if it is positive.
+///
+/// ### Errors
+///
+/// - `Refused(TooLow)` if `value` is zero or less.
+/// - A `ProbeError` from the store, such as `Unavailable`.
+pub fn wrapped(value: Int) -> Result(Int, ProbeError) {
+  case value > 0 {
+    True -> Ok(value)
+    False -> Error(Refused(TooLow))
+  }
+}
+
+/// Returns `value` from the store.
+///
+/// ### Errors
+///
+/// - `Missing` if the store has no value.
+pub fn stale(value: Int) -> Result(Int, ProbeError) {
+  Ok(value)
+}
+
+/// Returns `value` unchanged.
+pub fn undocumented(value: Int) -> Result(Int, ProbeError) {
+  Ok(value)
+}
+EOF
+errs=$("$doc_check" --errors "$docs/errors/src" 2>&1) && {
+  echo "DOC CHECK FAILURE: --errors passed a stale error section" >&2
+  exit 1
+}
+assert_contains "$errs" 'stale: `Missing` is not a variant of ProbeError' "--errors reports a name that is not a variant"
+assert_contains "$errs" "undocumented: returns ProbeError but has no ### Errors section" "--errors reports a missing section"
+case "$errs" in
+  *"wrapped:"*) echo "DOC CHECK FAILURE: --errors refused a wrapped variant or a type name" >&2; exit 1 ;;
+esac
+echo "PASS: --errors accepts wrapped variants and type names"
+
 step "recorded attempt variants compile"
 mkdir -p "$scratch/variants"
 for taskdir in "$root"/benchmarks/tasks/*/; do
