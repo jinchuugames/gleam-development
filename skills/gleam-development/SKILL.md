@@ -92,7 +92,8 @@ list from memory — check each name you are about to write.
   No essays, and no history of the change: git holds that.
 - Doc comments follow `references/documentation.md`: a verb-first summary,
   fixed sections, short sentences, no banned words. Run
-  `scripts/gleam-doc-check src` after you change a `////` or `///` comment.
+  `scripts/gleam-doc-check --errors src` after you change a `////` or `///`
+  comment. `--fix` rewrites the findings that have a safe fix.
 - `Result(a, e)` for recoverable failure with a custom error type; `Option(a)`
   for absence. No exceptions as control flow, no dynamic typing to dodge a
   type.

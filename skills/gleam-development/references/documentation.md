@@ -51,6 +51,8 @@ refuses these words in doc comments:
 | simply, just, basically, obviously | (delete the word) |
 
 Add project words with `--words <file>`, one word or phrase on each line.
+Write `from => to` to give the replacement that `--fix` uses. A word without
+`=>` has no safe replacement, and `--fix` leaves it for you.
 
 ## Module comments (`////`)
 
@@ -121,7 +123,8 @@ pub fn claim(...) -> Result(Receipt, ClaimError)
    `debt`."
 3. Use only these headings, with `###`:
    - `### Errors` for a function that returns `Result`, with one item for each
-     error variant.
+     error variant that it can return. Name the variant in backticks:
+     `` `InsufficientFunds` ``, or `` `Refused(TooLow)` `` for a wrapped one.
    - `### Panics` for a function that can panic, with the condition.
    - `### Example` or `### Examples` for a call that is not obvious.
 4. Use a note for a rule that the caller must obey:
@@ -192,7 +195,31 @@ After:
 "$skill/scripts/gleam-doc-check" --words doc-words.txt src
 "$skill/scripts/gleam-doc-check" --write-baseline doc-baseline.txt src
 "$skill/scripts/gleam-doc-check" --baseline doc-baseline.txt src
+"$skill/scripts/gleam-doc-check" --fix src                 # rewrite the safe findings
+"$skill/scripts/gleam-doc-check" --errors src              # check ### Errors sections
 ```
+
+`--fix` rewrites two kinds of finding in place, and then checks again:
+
+- A banned word that has a replacement: "carries" becomes "holds", and
+  "simply" is deleted. The fix keeps the case of the word and does not change
+  text in backticks.
+- A function summary that starts with a known imperative verb: "Parse"
+  becomes "Parses", and "Whether" becomes "Returns whether".
+
+The other findings need a person or an agent. Read the diff before you commit:
+a replacement can be correct for the rule and wrong for the sentence.
+
+`--errors` runs `gleam export package-interface`, so the package must build.
+It reports the rule `errors-section`:
+
+- A public function that returns `Result(a, E)` has no `### Errors` section.
+  `E` must be a custom type of the same package.
+- An item names a constructor that is not a variant of `E`. A variant of a
+  type that `E` wraps is correct, and so is the name of the type.
+
+The interface does not show which variants a function can return. So the
+check does not report a variant that the section leaves out.
 
 The script skips a file that has the word "generated" in its first five
 lines.
